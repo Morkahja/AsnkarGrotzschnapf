@@ -1,6 +1,7 @@
 """Command line for the poetry archive."""
 
 import argparse
+import os
 import sys
 from datetime import date
 from pathlib import Path
@@ -15,12 +16,28 @@ from anskar.config import PROJECT_ROOT, database_path
 from anskar.daily.errors import DailyError
 from anskar.daily.pipeline import daily_run, list_runs, resume_run, run_status
 from anskar.daily.power import decide_after_run, verify_rtc_wake
+from anskar.daily.rehearsal import (
+    cancel_test_cycle,
+    finish_test_cycle,
+    launch_after_wake,
+    run_inhibited_work,
+    schedule_test_cycle,
+    update_report,
+    warning_text,
+)
 from anskar.daily.schedule import install_units, prepare_system_units, schedule_status
 from anskar.db import connect
 from anskar.etsy.connect import connect_etsy, etsy_connection_status, test_etsy_connection
 from anskar.etsy.credentials import setup_etsy_interactive
 from anskar.etsy.errors import EtsyError
-from anskar.etsy.oauth import DEFAULT_REDIRECT_URI, DEFAULT_SCOPES, EXPECTED_SHOP_NAME
+from anskar.etsy.maintain import maintain_etsy, offerings_status
+from anskar.etsy.oauth import (
+    DEFAULT_REDIRECT_URI,
+    DEFAULT_SCOPES,
+    EXPECTED_SHOP_ID,
+    EXPECTED_SHOP_NAME,
+)
+from anskar.etsy.readiness import etsy_publish_readiness
 from anskar.etsy.service import publish_pack as etsy_publish_pack
 from anskar.etsy.state import STATES as ETSY_STATES, set_etsy_state
 from anskar.instagram.credentials import install_token
@@ -205,7 +222,7 @@ def _parser() -> argparse.ArgumentParser:
     etsy_commands.add_parser("setup", help="store Etsy API keystring and shared secret in ~/.config/anskar/")
     etsy_connect = etsy_commands.add_parser(
         "connect",
-        help="authorize Anskar Gortzschnapf Publisher for the Anskartprints shop (OAuth + PKCE)",
+        help="authorize Anskar Gortzschnapf Publisher for the Anskarartprints shop (OAuth + PKCE)",
     )
     etsy_connect.add_argument(
         "--no-browser",
@@ -219,7 +236,7 @@ def _parser() -> argparse.ArgumentParser:
     etsy_connect.add_argument(
         "--confirm-shop",
         action="store_true",
-        help="allow replacing a stored shop id or accepting a name other than Anskartprints",
+        help="allow replacing a stored shop id or accepting a shop other than Anskarartprints",
     )
     etsy_commands.add_parser(
         "status",
@@ -229,12 +246,29 @@ def _parser() -> argparse.ArgumentParser:
         "test",
         help="read-only authenticated check of the connected Etsy shop (no listings)",
     )
+    etsy_ready = etsy_commands.add_parser(
+        "readiness",
+        help="check whether Anskar can create a live digital listing (no writes)",
+    )
+    etsy_ready.add_argument("pack_id", nargs="?", help="optional pack to validate assets against")
+    etsy_commands.add_parser(
+        "maintain",
+        help="sync sales, apply day-30 discount, remove unsold listings after 42 days",
+    )
+    etsy_offerings = etsy_commands.add_parser(
+        "offerings",
+        help="list Etsy offerings with prices, discounts, sales, and expiry state",
+    )
+    etsy_offerings.add_argument("--limit", type=int, default=50)
     etsy_state = etsy_commands.add_parser(
         "set-state",
         help="set seller verification state: pending_verification, ready, or disabled",
     )
     etsy_state.add_argument("state", choices=ETSY_STATES)
-    etsy_publish = etsy_commands.add_parser("publish", help="publish one pack as a digital download")
+    etsy_publish = etsy_commands.add_parser(
+        "publish",
+        help="publish one pack as a single-sale digital download (manual; daily does this when ready)",
+    )
     etsy_publish.add_argument("pack_id")
     etsy_mode = etsy_publish.add_mutually_exclusive_group(required=True)
     etsy_mode.add_argument("--dry-run", action="store_true")
@@ -272,6 +306,23 @@ def _parser() -> argparse.ArgumentParser:
         "verify-wake",
         help="read-only RTC/wake check; never suspends and never publishes",
     )
+    test_cycle = schedule_commands.add_parser(
+        "test-cycle",
+        help="one-time suspend and wake rehearsal; --publish also posts one artwork",
+    )
+    test_cycle.add_argument(
+        "--publish",
+        action="store_true",
+        help="paint one extra artwork and publish it to Instagram (asks for confirmation)",
+    )
+    test_cycle.add_argument(
+        "--cancel",
+        action="store_true",
+        help="remove the temporary wake units without touching the noon timer",
+    )
+    test_cycle.add_argument("--run", action="store_true", help=argparse.SUPPRESS)
+    test_cycle.add_argument("--work", action="store_true", help=argparse.SUPPRESS)
+    test_cycle.add_argument("--finish", action="store_true", help=argparse.SUPPRESS)
     return parser
 
 
@@ -542,7 +593,7 @@ def _etsy(args: argparse.Namespace) -> int:
         print("Etsy API key material stored. Secrets were not printed.")
         print(f"Path: {public['path']}")
         print(f"Registered callback: {public['redirect_uri']}")
-        print(f"Expected shop: {EXPECTED_SHOP_NAME}")
+        print(f"Expected shop: {EXPECTED_SHOP_NAME} (id {EXPECTED_SHOP_ID})")
         print("Next: register that exact callback URL with Etsy, then run `anskar etsy connect`.")
         print("OAuth success does not change seller verification. Publishing still needs `set-state ready`.")
         return 0
@@ -565,10 +616,13 @@ def _etsy(args: argparse.Namespace) -> int:
     if args.etsy_command == "status":
         report = etsy_connection_status()
         print(f"Seller verification state: {report['integration_state']}")
-        print(f"Expected shop: {report['expected_shop_name']}")
+        print(
+            f"Expected shop: {report['expected_shop_name']} "
+            f"(id {report.get('expected_shop_id') or EXPECTED_SHOP_ID})"
+        )
         print(f"Registered callback: {report.get('redirect_uri') or DEFAULT_REDIRECT_URI}")
         if report.get("oauth_configured"):
-            print(f"OAuth: configured")
+            print("OAuth: configured")
             print(f"Shop id: {report['shop_id']}")
             print(f"Shop name: {report['shop_name']}")
             print(f"Scopes: {report['scopes'] or DEFAULT_SCOPES}")
@@ -585,7 +639,14 @@ def _etsy(args: argparse.Namespace) -> int:
         result = test_etsy_connection()
         print(f"Shop id: {result['shop_id']}")
         print(f"Shop name: {result['shop_name']}")
-        print(f"Name matches {result['expected_shop_name']}: {'yes' if result['name_matches'] else 'no'}")
+        print(
+            f"Shop id matches {result['expected_shop_id']}: "
+            f"{'yes' if result.get('shop_id_matches') else 'no'}"
+        )
+        print(
+            f"Name matches {result['expected_shop_name']}: "
+            f"{'yes' if result['name_matches'] else 'no'}"
+        )
         print(f"Token valid: {'yes' if result['token_valid'] else 'no'}")
         print(f"Seller verification state: {result['integration_state']}")
         if not result["ok"]:
@@ -593,11 +654,51 @@ def _etsy(args: argparse.Namespace) -> int:
             return 1
         print("Authenticated shop check succeeded. No listings were created or changed.")
         return 0
+    if args.etsy_command == "readiness":
+        report = etsy_publish_readiness(args.pack_id)
+        print(f"Seller state: {report['seller_state']}")
+        print(f"Ready to publish: {'yes' if report['ready_to_publish'] else 'no'}")
+        for name, value in (report.get("checks") or {}).items():
+            print(f"  {name}: {value}")
+        return 0 if report["ready_to_publish"] or not report["seller_ready"] else 1
+    if args.etsy_command == "maintain":
+        report = maintain_etsy()
+        print(f"Seller state: {report['seller_state']}")
+        print(f"Sales recorded: {report['sales_recorded']}")
+        print(f"Discounted: {report['discounted']}")
+        print(f"Expired/removed: {report['expired']}")
+        if report.get("offline_delay"):
+            print("Note: maintenance was delayed (offline or API timeout). Deadlines catch up next run.")
+        for err in report.get("errors") or []:
+            print(f"Error: {err}", file=sys.stderr)
+        for skip in report.get("skipped") or []:
+            print(f"Skipped: {skip}")
+        return 0
+    if args.etsy_command == "offerings":
+        report = offerings_status(limit=args.limit)
+        print(f"Seller state: {report['seller_state']}")
+        print(f"Completed sales (S base): {report['completed_sales_count']}")
+        for item in report["offerings"]:
+            print(
+                f"{item['artwork_id']} listing={item['listing_id']} state={item['state']} "
+                f"price={item['current_price_sek']} SEK "
+                f"(original {item['original_price_sek']}, R={item['price_r']}, S={item['price_s']}) "
+                f"discount={'yes' if item['discount_applied'] else 'no'} "
+                f"activated={item['activated_at']}"
+            )
+        if not report["offerings"]:
+            print("No Etsy offerings recorded yet.")
+        return 0
     if args.etsy_command == "set-state":
         stored = set_etsy_state(args.state)
         print(f"Etsy seller verification state set to {stored}.")
         if stored == "ready":
-            print("New daily runs may publish Etsy listings. Queued backlog still needs explicit publish.")
+            print(
+                "New daily runs will create and activate Etsy listings automatically "
+                "(quantity 1, SEK formula pricing). Queued historical backlog still needs "
+                "`anskar etsy publish <pack-id> --confirm`. Enable `anskar-etsy-maintain.timer` "
+                "via `anskar schedule install` for sales/discount/expiry."
+            )
         return 0
     if not getattr(args, "confirm", False) and not getattr(args, "dry_run", False):
         print("Pass --dry-run or --confirm.", file=sys.stderr)
@@ -606,12 +707,14 @@ def _etsy(args: argparse.Namespace) -> int:
         result = etsy_publish_pack(args.pack_id, dry_run=False)
         print(f"Published Etsy listing for {result['pack_id']}.")
         print(f"Listing id: {result['listing_id']}")
+        print(f"Price: {result.get('price_sek')} SEK (R={result.get('price_r')} S={result.get('price_s')})")
         if result.get("listing_url"):
             print(f"URL: {result['listing_url']}")
         return 0
     result = etsy_publish_pack(args.pack_id, dry_run=True)
     print(f"Etsy dry run for {result['pack_id']}. Nothing was published.")
     print(f"Title: {result['title']}")
+    print(f"Price: {result.get('price_sek')} SEK (R={result.get('price_r')} S={result.get('price_s')})")
     return 0
 
 
@@ -725,6 +828,8 @@ def _schedule(args: argparse.Namespace) -> int:
         for command in report["rollback_commands"]:
             print(f"  {command}")
         return 0
+    if args.schedule_command == "test-cycle":
+        return _test_cycle(args)
     if args.schedule_command == "verify-wake":
         report = verify_rtc_wake()
         print(f"wakealarm: {report['wakealarm_path']} exists={'yes' if report['wakealarm_exists'] else 'no'}")
@@ -742,6 +847,59 @@ def _schedule(args: argparse.Namespace) -> int:
     else:
         print("Timer not enabled. Pass --enable to enable after reviewing the units.")
         print("Or run: systemctl --user enable --now anskar-daily.timer")
+    return 0
+
+
+def _test_cycle(args: argparse.Namespace) -> int:
+    if args.cancel:
+        report = cancel_test_cycle()
+        print(report["status"])
+        for error in report.get("errors") or []:
+            print(error, file=sys.stderr)
+        print("The noon timer was not changed.")
+        return 0 if report["status"] == "cancelled" else 1
+    if args.run or args.work or args.finish:
+        if os.environ.get("ANSKAR_TEST_CYCLE") != "1":
+            print("Refusing to run the rehearsal worker outside its wake service.", file=sys.stderr)
+            return 1
+        if args.finish:
+            decision = finish_test_cycle()
+            print(decision.reason)
+            return 0
+        if args.work:
+            report = run_inhibited_work(publish=os.environ.get("ANSKAR_TEST_PUBLISH") == "1")
+            print(report.get("status"))
+            return 0 if report.get("success") else 1
+        try:
+            launch_after_wake()
+        except DailyError as exc:
+            # launch_after_wake already persisted the failing stage; merge only.
+            update_report(
+                {
+                    "status": "failed",
+                    "success": False,
+                    "publish": os.environ.get("ANSKAR_TEST_PUBLISH") == "1",
+                    "error": str(exc),
+                    "noon_timer_changed": False,
+                }
+            )
+            print(str(exc), file=sys.stderr)
+            return 1
+        return 0
+    print(warning_text(publish=args.publish))
+    print("Inspect the result later in data/test-cycle/latest.json")
+    print("Cancel before wake with: anskar schedule test-cycle --cancel")
+    answer = input("Type yes to continue: ")
+    if answer.strip().lower() != "yes":
+        print("Cancelled. The computer was not suspended and nothing was published.")
+        return 1
+    try:
+        report = schedule_test_cycle(publish=args.publish)
+    except DailyError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    print(f"Armed a one-time wake at {report['wake_at']}.")
+    print(f"Report: {report['report']}")
     return 0
 
 

@@ -9,6 +9,7 @@ import subprocess
 from pathlib import Path
 
 from anskar.instagram.errors import InstagramError
+from anskar.instagram.hashtags import append_hashtags, format_hashtag_block, hashtags_from_manifest
 from anskar.instagram.hosting import etsy_shop_url, image_url, validate_public_url
 from anskar.instagram.jpeg import MAX_LONG_EDGE, jpeg_size, validate_jpeg
 from anskar.printmaker import packs_dir
@@ -70,6 +71,9 @@ def compose(manifest: dict, *, etsy_url: str | None) -> dict[str, object]:
     shop = None
     if etsy_url:
         shop = validate_public_url(etsy_url, label="Etsy shop URL")
+    tags = hashtags_from_manifest(manifest)
+    tag_block = format_hashtag_block(tags)
+    tag_budget = len(tag_block)
     if not matched:
         caption = (
             "This artwork is not linked to a documented poem, so it has no title or author to attribute.\n\n"
@@ -84,10 +88,10 @@ def compose(manifest: dict, *, etsy_url: str | None) -> dict[str, object]:
         with_poem = f"{title}\n{author}\n\n{poem}\n\n{disclosure}" if poem else base
         if shop and poem:
             with_poem = f"{with_poem}\n\nPrint: {shop}"
-        if len(with_poem) <= CAPTION_LIMIT:
+        if len(with_poem) + tag_budget <= CAPTION_LIMIT:
             caption = with_poem
             poem_included = bool(poem)
-        elif len(base) <= CAPTION_LIMIT:
+        elif len(base) + tag_budget <= CAPTION_LIMIT:
             caption = base
             poem_included = False
         else:
@@ -96,6 +100,7 @@ def compose(manifest: dict, *, etsy_url: str | None) -> dict[str, object]:
                 kind="media",
             )
         alt = f"Artwork titled {title}, after the poem by {author}. The image has no added text. {disclosure}"
+    caption = append_hashtags(caption, tags)
     _check_limits(caption)
     if len(alt) > ALT_LIMIT:
         alt = alt[: ALT_LIMIT - 1].rstrip() + "…"
@@ -106,6 +111,7 @@ def compose(manifest: dict, *, etsy_url: str | None) -> dict[str, object]:
         "author": author or None,
         "poem_included": poem_included,
         "etsy_url": shop,
+        "hashtags": tags,
         "publishable": matched and bool(manifest.get("publication_ready")),
         "text_added_to_image": False,
     }

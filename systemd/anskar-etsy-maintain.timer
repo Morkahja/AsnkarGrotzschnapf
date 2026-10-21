@@ -1,0 +1,11 @@
+[Unit]
+Description=Maintain Anskar Etsy offerings every six hours
+
+[Timer]
+OnCalendar=*-*-* 0/6:15:00
+Persistent=true
+Unit=anskar-etsy-maintain.service
+RandomizedDelaySec=5m
+
+[Install]
+WantedBy=timers.target

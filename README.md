@@ -79,9 +79,20 @@ PYTHONPATH=src .venv/bin/python -m anskar etsy status
 PYTHONPATH=src .venv/bin/python -m anskar etsy test
 ```
 
-OAuth alone does not enable publishing. Seller verification stays separate (`etsy set-state`). Tokens refresh automatically when needed. Secrets are never printed.
+OAuth alone does not enable publishing. Seller verification stays separate (`etsy set-state ready`). When ready, each new daily pack is listed automatically as a quantity-1 SEK digital download; `etsy maintain` handles sales, the day-30 discount, and day-42 removal. Tokens refresh automatically. Secrets are never printed.
 
 The page is `http://127.0.0.1:8765/`. Use another port with `--port`.
+
+## One-time wake rehearsal
+
+This suspends the computer. It does not change the noon timer. `--publish` also creates one real Instagram post. Etsy is only queued.
+
+```bash
+PYTHONPATH=src .venv/bin/python -m anskar schedule test-cycle
+PYTHONPATH=src .venv/bin/python -m anskar schedule test-cycle --publish
+```
+
+The result is kept in `data/test-cycle/latest.json`. Cancel before the wake with `anskar schedule test-cycle --cancel`.
 
 ## Tests
 

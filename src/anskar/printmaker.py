@@ -26,6 +26,7 @@ from anskar.artwork.png import (
 )
 from anskar.artwork.settings import GeneratorSettings
 from anskar.config import PROJECT_ROOT
+from anskar.instagram.hashtags import append_hashtags, choose_hashtags
 from anskar.models import COMMERCIAL_UNVERIFIED, model_allows_publication, require_model
 
 AI_DISCLOSURE = (
@@ -218,13 +219,24 @@ def _fill_pack(
     shutil.copy2(print_path, etsy / "print.png")
     if jpeg_path.is_file():
         shutil.copy2(jpeg_path, etsy / "print.jpg")
+    from anskar.etsy.gallery import write_detail_crops
+
+    detail_paths = write_detail_crops(print_path, etsy)
     rights = _rights(
         database,
         str(record.get("source_text") or record.get("body") or ""),
         poem_id=_optional_poem_id(record),
         visual_prompt=str(record.get("visual_prompt") or record.get("prompt") or ""),
     )
-    caption = _instagram_caption(rights, record)
+    hashtags = choose_hashtags(
+        title=rights.get("title") if isinstance(rights.get("title"), str) else None,
+        author=rights.get("author") if isinstance(rights.get("author"), str) else None,
+        poem=str(record.get("source_text") or record.get("body") or ""),
+        abstraction=str(record.get("abstraction") or "") or None,
+        style_preset=str(record.get("style_preset") or "") or None,
+        visual_prompt=str(record.get("visual_prompt") or record.get("prompt") or "") or None,
+    )
+    caption = append_hashtags(_instagram_caption(rights, record), hashtags)
     spec_met = meets_print_specification(source_pixels, measured, "none")
     model_commercial = _model_commercial(record)
     model_ok = model_allows_publication(record.get("model_id") if isinstance(record.get("model_id"), str) else None)
@@ -255,6 +267,7 @@ def _fill_pack(
         "etsy_print": "etsy/print.png",
         "etsy_preview": "etsy/preview.png",
         "etsy_listing": "etsy/listing.txt",
+        "etsy_details": [f"etsy/{path.name}" for path in detail_paths],
     }
     if jpeg_path.is_file():
         files["print_jpeg"] = "print/artwork.jpg"
@@ -281,6 +294,7 @@ def _fill_pack(
         "style_preset": record.get("style_preset"),
         "style_prompt": record.get("style_prompt"),
         "style_composition": record.get("style_composition"),
+        "instagram_hashtags": hashtags,
         "method": record.get("method"),
         "model_id": record.get("model_id"),
         "model_name": record.get("model_name"),

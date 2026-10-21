@@ -4,7 +4,7 @@ Status: implemented. Authorization only; no listing create/update/delete.
 
 ## Goal
 
-Connect the Etsy Open API v3 app **Anskar Gortzschnapf Publisher** to shop **Anskartprints** with OAuth 2.0 authorization-code + PKCE (S256), secure local credential storage, and automatic token refresh.
+Connect the Etsy Open API v3 app **Anskar Gortzschnapf Publisher** to shop **Anskarartprints** (id `37684672`) with OAuth 2.0 authorization-code + PKCE (S256), secure local credential storage, and automatic token refresh. The numeric shop id is the primary identity check.
 
 ## Callback URL (register exactly)
 

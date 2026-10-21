@@ -29,17 +29,23 @@ class AfterRunDecision:
     force_suspend: bool = False  # always False — kept explicit for tests
 
 
-def inhibit_command(python: str, *args: str) -> list[str]:
-    """Build the ExecStart argv that keeps the machine awake for one job."""
+def inhibit_argv(argv: list[str]) -> list[str]:
+    """Wrap any argv in systemd-inhibit (block idle/sleep for the child lifetime)."""
+    if not argv:
+        raise ValueError("inhibit_argv requires a non-empty command")
     return [
         "/usr/bin/systemd-inhibit",
         f"--what={INHIBIT_WHAT}",
         f"--who={INHIBIT_WHO}",
         f"--why={INHIBIT_WHY}",
         "--mode=block",
-        python,
-        *args,
+        *argv,
     ]
+
+
+def inhibit_command(python: str, *args: str) -> list[str]:
+    """Build the ExecStart argv that keeps the machine awake for one job."""
+    return inhibit_argv([python, *args])
 
 
 def session_idle_hint(

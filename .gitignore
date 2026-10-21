@@ -8,6 +8,7 @@ data/artworks/
 data/experiments/
 data/instagram/
 data/systemd-system/
+data/test-cycle/
 data/*.sqlite
 data/*.sqlite3
 *.sqlite

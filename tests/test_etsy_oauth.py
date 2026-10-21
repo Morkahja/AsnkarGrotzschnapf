@@ -24,12 +24,15 @@ from anskar.etsy.credentials import (
     load_etsy_credentials,
     save_oauth_tokens,
     setup_etsy_interactive,
+    shop_id_matches,
+    shop_identity_matches,
     shop_name_matches,
 )
 from anskar.etsy.errors import EtsyError, redact
 from anskar.etsy.oauth import (
     DEFAULT_REDIRECT_URI,
     DEFAULT_SCOPES,
+    EXPECTED_SHOP_ID,
     EXPECTED_SHOP_NAME,
     LEGACY_REDIRECT_URIS,
     LOOPBACK_BIND_HOST,
@@ -208,7 +211,6 @@ class EtsyOauthTests(unittest.TestCase):
                 "Etsy shop id (leave blank until connect): ": "",
                 f"Taxonomy id [2078]: ": "",
                 "Return policy id (optional): ": "",
-                "Default price [12.00]: ": "",
             }[prompt],
             getpass_fn=lambda prompt: {
                 "Etsy shared secret: ": "shared-secret",
@@ -312,7 +314,6 @@ class EtsyOauthTests(unittest.TestCase):
                 "Etsy shop id (leave blank until connect): ": "",
                 f"Taxonomy id [2078]: ": "",
                 "Return policy id (optional): ": "",
-                "Default price [12.00]: ": "",
             }[prompt],
             getpass_fn=lambda prompt: {
                 "Etsy shared secret: ": "shared-secret",
@@ -475,30 +476,82 @@ class EtsyOauthTests(unittest.TestCase):
                 token_type="Bearer",
                 obtained_at=datetime.now(timezone.utc),
             ),
-            shop_id="998877",
+            shop_id=EXPECTED_SHOP_ID,
             shop_name=EXPECTED_SHOP_NAME,
             redirect_uri=DEFAULT_REDIRECT_URI,
             path=self.credentials_path,
         )
 
-        def transport(method, url, headers, body, timeout):
-            self.assertEqual(method, "GET")
-            self.assertIn("/shops/998877", url)
-            return (
-                200,
-                json.dumps({"shop_id": 998877, "shop_name": EXPECTED_SHOP_NAME}).encode(),
-                {},
-            )
-
         with patch("anskar.etsy.connect.EtsyClient") as client_cls:
             client_cls.return_value.get_shop.return_value = {
-                "shop_id": 998877,
+                "shop_id": int(EXPECTED_SHOP_ID),
                 "shop_name": EXPECTED_SHOP_NAME,
             }
             result = test_etsy_connection(path=self.credentials_path)
         self.assertTrue(result["ok"])
+        self.assertTrue(result["shop_id_matches"])
         self.assertTrue(result["name_matches"])
+        self.assertEqual(result["expected_shop_id"], EXPECTED_SHOP_ID)
         self.assertEqual(result["integration_state"], PENDING_VERIFICATION)
+
+    def test_same_shop_id_accepted_when_display_name_differs(self) -> None:
+        save_oauth_tokens(
+            api_key="key",
+            shared_secret="secret",
+            tokens=TokenResponse(
+                access_token="1.access",
+                refresh_token="r",
+                expires_in=3600,
+                scope=DEFAULT_SCOPES,
+                token_type="Bearer",
+                obtained_at=datetime.now(timezone.utc),
+            ),
+            shop_id=EXPECTED_SHOP_ID,
+            shop_name=EXPECTED_SHOP_NAME,
+            redirect_uri=DEFAULT_REDIRECT_URI,
+            path=self.credentials_path,
+        )
+        before = self.credentials_path.read_text(encoding="utf-8")
+        with patch("anskar.etsy.connect.EtsyClient") as client_cls:
+            client_cls.return_value.get_shop.return_value = {
+                "shop_id": int(EXPECTED_SHOP_ID),
+                "shop_name": "TemporaryDisplayName",
+            }
+            result = test_etsy_connection(path=self.credentials_path)
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["shop_id_matches"])
+        self.assertFalse(result["name_matches"])
+        # Tokens and refresh material must remain untouched.
+        after = self.credentials_path.read_text(encoding="utf-8")
+        self.assertEqual(before, after)
+        self.assertIn("1.access", after)
+        self.assertIn('"refresh_token": "r"', after)
+
+    def test_different_shop_id_is_rejected(self) -> None:
+        save_oauth_tokens(
+            api_key="key",
+            shared_secret="secret",
+            tokens=TokenResponse(
+                access_token="1.access",
+                refresh_token="r",
+                expires_in=3600,
+                scope=DEFAULT_SCOPES,
+                token_type="Bearer",
+                obtained_at=datetime.now(timezone.utc),
+            ),
+            shop_id=EXPECTED_SHOP_ID,
+            shop_name=EXPECTED_SHOP_NAME,
+            redirect_uri=DEFAULT_REDIRECT_URI,
+            path=self.credentials_path,
+        )
+        with patch("anskar.etsy.connect.EtsyClient") as client_cls:
+            client_cls.return_value.get_shop.return_value = {
+                "shop_id": 99999999,
+                "shop_name": EXPECTED_SHOP_NAME,
+            }
+            result = test_etsy_connection(path=self.credentials_path)
+        self.assertFalse(result["ok"])
+        self.assertFalse(result["shop_id_matches"])
 
     def test_oauth_success_does_not_set_ready(self) -> None:
         self.assertEqual(load_etsy_state(self.state_path), PENDING_VERIFICATION)
@@ -549,9 +602,33 @@ class EtsyOauthTests(unittest.TestCase):
         self.assertIn("DNS:localhost", text)
         self.assertTrue((self.tls_dir / "etsy-localhost-cert.pem.incompatible").is_file())
 
-    def test_shop_name_match_is_case_insensitive(self) -> None:
-        self.assertTrue(shop_name_matches("anskartprints"))
+    def test_shop_identity_prefers_numeric_id(self) -> None:
+        self.assertEqual(EXPECTED_SHOP_NAME, "Anskarartprints")
+        self.assertEqual(EXPECTED_SHOP_ID, "37684672")
+        self.assertTrue(shop_id_matches(37684672))
+        self.assertTrue(shop_name_matches("anskarartprints"))
+        self.assertFalse(shop_name_matches("Anskartprints"))
         self.assertFalse(shop_name_matches("Other"))
+        self.assertTrue(
+            shop_identity_matches(
+                shop_id=EXPECTED_SHOP_ID,
+                shop_name="CompletelyDifferentLabel",
+            )
+        )
+        self.assertFalse(
+            shop_identity_matches(
+                shop_id="999",
+                shop_name="OtherShop",
+                stored_shop_id=EXPECTED_SHOP_ID,
+            )
+        )
+        self.assertTrue(
+            shop_identity_matches(
+                shop_id=EXPECTED_SHOP_ID,
+                shop_name="OtherLabel",
+                stored_shop_id=EXPECTED_SHOP_ID,
+            )
+        )
 
     def test_redact_hides_authorization_code(self) -> None:
         cleaned = redact("callback?code=super-secret-code&state=abc")
@@ -573,7 +650,6 @@ class EtsyOauthTests(unittest.TestCase):
                 "Etsy shop id (leave blank until connect): ": "",
                 f"Taxonomy id [2078]: ": "",
                 "Return policy id (optional): ": "",
-                "Default price [12.00]: ": "",
             }[prompt],
             getpass_fn=lambda prompt: {
                 "Etsy shared secret: ": "shared-secret",

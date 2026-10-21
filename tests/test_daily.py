@@ -36,6 +36,7 @@ class DailyPipelineTests(unittest.TestCase):
         self.artworks.mkdir()
         self._seed_archive()
         set_etsy_state(PENDING_VERIFICATION, path=self.etsy_state)
+        os.environ["ANSKAR_NOTIFY"] = "0"
 
     def tearDown(self):
         self.temporary.cleanup()
@@ -867,6 +868,66 @@ class DailyPipelineTests(unittest.TestCase):
                 generate=lambda *a, **k: (_ for _ in ()).throw(AssertionError("second")),
                 prepare_pack=lambda *a, **k: (_ for _ in ()).throw(AssertionError("second")),
                 publish_instagram=lambda *a, **k: (_ for _ in ()).throw(AssertionError("second")),
+                lock=self.lock,
+            )
+        self.assertEqual(caught.exception.kind, "busy")
+
+    def test_rehearsal_adds_an_artwork_without_using_the_noon_slot(self):
+        etsy_calls: list[str] = []
+
+        def publish_etsy(*_args, **_kwargs):
+            etsy_calls.append("live")
+            return {"listing_id": "should-not-happen"}
+
+        with patch("anskar.daily.pipeline.etsy_is_ready", return_value=False):
+            first = daily_run(
+                archive_db=self.archive,
+                daily_db=self.daily_db,
+                packs=self.packs,
+                artworks=self.artworks,
+                generate=lambda *a, **k: self._fake_artwork(self.archive, seed=1),
+                prepare_pack=lambda metadata, **k: self._fake_pack(metadata, suffix="noon"),
+                publish_instagram=lambda pack_id, **k: {
+                    "published": True,
+                    "media_id": "ig-noon",
+                    "permalink": "https://www.instagram.com/p/noon/",
+                    "pack_id": pack_id,
+                },
+                lock=self.lock,
+            )
+        with patch("anskar.daily.pipeline.etsy_is_ready", return_value=True):
+            extra = daily_run(
+                archive_db=self.archive,
+                daily_db=self.daily_db,
+                packs=self.packs,
+                artworks=self.artworks,
+                allow_test=True,
+                queue_etsy_only=True,
+                generate=lambda *a, **k: self._fake_artwork(self.archive, seed=2),
+                prepare_pack=lambda metadata, **k: self._fake_pack(metadata, suffix="test"),
+                publish_instagram=lambda pack_id, **k: {
+                    "published": True,
+                    "media_id": "ig-test",
+                    "permalink": "https://www.instagram.com/p/test/",
+                    "pack_id": pack_id,
+                },
+                publish_etsy=publish_etsy,
+                lock=self.lock,
+            )
+        self.assertEqual(first["status"], "completed")
+        self.assertEqual(extra["status"], "completed")
+        self.assertNotEqual(first["poem_id"], extra["poem_id"])
+        self.assertNotEqual(first["pack_id"], extra["pack_id"])
+        self.assertEqual(extra["instagram_permalink"], "https://www.instagram.com/p/test/")
+        self.assertEqual(extra["etsy_status"], "pending_shop_activation")
+        self.assertEqual(etsy_calls, [])
+        with self.assertRaises(DailyError) as caught:
+            daily_run(
+                archive_db=self.archive,
+                daily_db=self.daily_db,
+                packs=self.packs,
+                artworks=self.artworks,
+                generate=lambda *a, **k: (_ for _ in ()).throw(AssertionError("noon")),
                 lock=self.lock,
             )
         self.assertEqual(caught.exception.kind, "busy")

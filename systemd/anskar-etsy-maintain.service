@@ -1,0 +1,14 @@
+[Unit]
+Description=Anskar Grotzschnapf Etsy sales and offering maintenance
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=@PROJECT_ROOT@
+Environment=PYTHONPATH=@PROJECT_ROOT@/src
+ExecStart=@PYTHON@ -m anskar etsy maintain
+Nice=10
+
+[Install]
+WantedBy=default.target

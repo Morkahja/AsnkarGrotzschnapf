@@ -14,6 +14,7 @@ Environment=PYTHONPATH=@PROJECT_ROOT@/src
 Environment=XDG_RUNTIME_DIR=/run/user/@UID@
 Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/@UID@/bus
 Environment=ANSKAR_SCHEDULED=1
+Environment=ANSKAR_NOTIFY=1
 # Never run the artist as root. Inhibit sleep only while this oneshot runs.
 ExecStart=/usr/bin/systemd-inhibit --what=idle:sleep:handle-lid-switch --who=AnskarGrotzschnapf --why="Daily artwork production" --mode=block @PYTHON@ -m anskar daily-run
 Nice=10

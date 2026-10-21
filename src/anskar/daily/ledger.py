@@ -105,6 +105,7 @@ def _ensure_columns(connection: sqlite3.Connection) -> None:
         "instagram_status": "TEXT",
         "etsy_status": "TEXT",
         "selection_log": "TEXT",
+        "run_kind": "TEXT NOT NULL DEFAULT 'daily'",
     }
     for name, decl in additions.items():
         if name not in columns:
@@ -158,6 +159,7 @@ def completed_live_run_for_swedish_day(
         """
         SELECT * FROM daily_runs
         WHERE dry_run = 0 AND status = 'completed'
+          AND COALESCE(run_kind, 'daily') = 'daily'
         ORDER BY created_at DESC LIMIT 64
         """
     ).fetchall()
@@ -172,7 +174,14 @@ def get_run(connection: sqlite3.Connection, run_id: str) -> sqlite3.Row | None:
     return connection.execute("SELECT * FROM daily_runs WHERE id = ?", (run_id,)).fetchone()
 
 
-def begin_run(connection: sqlite3.Connection, *, dry_run: bool) -> str:
+def begin_run(
+    connection: sqlite3.Connection,
+    *,
+    dry_run: bool,
+    run_kind: str = "daily",
+) -> str:
+    if run_kind not in {"daily", "test"}:
+        raise DailyError("The daily-run kind is not valid.", kind="error")
     existing = active_run(connection)
     if existing is not None:
         raise DailyError(
@@ -180,7 +189,8 @@ def begin_run(connection: sqlite3.Connection, *, dry_run: bool) -> str:
             f"Resume it with `anskar daily-resume {existing['id']}`.",
             kind="busy",
         )
-    if not dry_run:
+    # A rehearsal does not consume the noon slot.
+    if not dry_run and run_kind != "test":
         today = swedish_calendar_day()
         prior = completed_live_run_for_swedish_day(connection, today)
         if prior is not None:
@@ -194,11 +204,11 @@ def begin_run(connection: sqlite3.Connection, *, dry_run: bool) -> str:
     connection.execute(
         """
         INSERT INTO daily_runs (
-            id, status, dry_run, artwork_status, instagram_status, etsy_status,
+            id, status, dry_run, run_kind, artwork_status, instagram_status, etsy_status,
             created_at, updated_at
-        ) VALUES (?, 'selected', ?, 'pending', 'pending', ?, ?, ?)
+        ) VALUES (?, 'selected', ?, ?, 'pending', 'pending', ?, ?, ?)
         """,
-        (run_id, 1 if dry_run else 0, ETSY_LISTING_PENDING, now, now),
+        (run_id, 1 if dry_run else 0, run_kind, ETSY_LISTING_PENDING, now, now),
     )
     return run_id
 

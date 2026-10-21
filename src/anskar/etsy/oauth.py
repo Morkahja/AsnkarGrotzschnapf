@@ -28,7 +28,8 @@ LEGACY_REDIRECT_URIS = frozenset({"https://127.0.0.1:8743/etsy/callback"})
 DEFAULT_SCOPES = (
     "listings_r listings_w listings_d shops_r transactions_r"
 )
-EXPECTED_SHOP_NAME = "Anskartprints"
+EXPECTED_SHOP_NAME = "Anskarartprints"
+EXPECTED_SHOP_ID = "37684672"
 CODE_VERIFIER_LENGTH = 64  # within 43–128 unreserved chars
 LOOPBACK_BIND_HOST = "127.0.0.1"
 

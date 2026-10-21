@@ -13,6 +13,7 @@ from anskar.etsy.errors import EtsyError
 from anskar.etsy.oauth import (
     DEFAULT_REDIRECT_URI,
     DEFAULT_SCOPES,
+    EXPECTED_SHOP_ID,
     EXPECTED_SHOP_NAME,
     TokenResponse,
     normalize_redirect_uri,
@@ -36,9 +37,9 @@ class EtsyCredentials:
     scopes: str | None = None
     shop_name: str | None = None
     redirect_uri: str = DEFAULT_REDIRECT_URI
-    price: str = "12.00"
-    currency: str = "USD"
-    quantity: int = 999
+    price: str = "0"  # listings use the SEK formula in anskar.etsy.pricing
+    currency: str = "SEK"
+    quantity: int = 1
     path: Path | None = None
 
     def x_api_key(self) -> str:
@@ -50,6 +51,7 @@ class EtsyCredentials:
             "path": str(self.path) if self.path else None,
             "shop_id": self.shop_id,
             "shop_name": self.shop_name,
+            "expected_shop_id": EXPECTED_SHOP_ID,
             "expected_shop_name": EXPECTED_SHOP_NAME,
             "taxonomy_id": self.taxonomy_id,
             "return_policy_id": self.return_policy_id,
@@ -177,9 +179,9 @@ def credentials_from_payload(payload: dict, *, path: Path | None = None) -> Etsy
         raise EtsyError("The Etsy taxonomy_id must be an integer.", kind="credentials") from exc
     return_policy = payload.get("return_policy_id")
     refresh = payload.get("refresh_token")
-    price = payload.get("price", "12.00")
-    currency = payload.get("currency", "USD")
-    quantity = payload.get("quantity", 999)
+    price = payload.get("price", "0")
+    currency = payload.get("currency", "SEK")
+    quantity = payload.get("quantity", 1)
     try:
         quantity_int = int(quantity)
     except (TypeError, ValueError) as exc:
@@ -202,8 +204,8 @@ def credentials_from_payload(payload: dict, *, path: Path | None = None) -> Etsy
         scopes=scopes.strip() if isinstance(scopes, str) and scopes.strip() else None,
         shop_name=shop_name.strip() if isinstance(shop_name, str) and shop_name.strip() else None,
         redirect_uri=normalize_redirect_uri(redirect if isinstance(redirect, str) else None),
-        price=str(price).strip() if price is not None else "12.00",
-        currency=str(currency).strip() if currency is not None else "USD",
+        price=str(price).strip() if price is not None else "0",
+        currency=str(currency).strip() if currency is not None else "SEK",
         quantity=quantity_int,
         path=path,
     )
@@ -216,7 +218,7 @@ def setup_etsy_interactive(
     getpass_fn=getpass.getpass,
 ) -> EtsyCredentials:
     """Store API key material (and optional manual token). Prefer `etsy connect` for OAuth."""
-    print("Etsy Open API setup for Anskar Gortzschnapf Publisher → Anskartprints.")
+    print("Etsy Open API setup for Anskar Gortzschnapf Publisher → Anskarartprints.")
     print("Enter the API keystring and shared secret from the Etsy developers page.")
     print("They are stored under ~/.config/anskar/ with mode 0600. Do not paste them into chat.")
     api_key = input_fn("Etsy API key (keystring): ").strip()
@@ -231,7 +233,6 @@ def setup_etsy_interactive(
     shop_id = input_fn("Etsy shop id (leave blank until connect): ").strip()
     taxonomy = input_fn(f"Taxonomy id [{DEFAULT_TAXONOMY_ID}]: ").strip() or str(DEFAULT_TAXONOMY_ID)
     return_policy = input_fn("Return policy id (optional): ").strip() or None
-    price = input_fn("Default price [12.00]: ").strip() or "12.00"
     if not api_key or not shared:
         raise EtsyError("API key and shared secret are required.", kind="credentials")
     try:
@@ -239,6 +240,7 @@ def setup_etsy_interactive(
     except ValueError as exc:
         raise EtsyError("Taxonomy id must be an integer.", kind="credentials") from exc
     # Allow app-only setup for OAuth connect (placeholder shop/token until connect).
+    # Listing prices use 229 + 20R + 10S SEK — not a stored default.
     stored = EtsyCredentials(
         api_key=api_key,
         shared_secret=shared,
@@ -246,7 +248,9 @@ def setup_etsy_interactive(
         shop_id=shop_id or "pending",
         taxonomy_id=taxonomy_id,
         return_policy_id=return_policy,
-        price=price,
+        price="0",
+        currency="SEK",
+        quantity=1,
         redirect_uri=redirect,
         path=destination or etsy_credentials_path(),
     )
@@ -278,9 +282,9 @@ def save_oauth_tokens(
         scopes=tokens.scope or DEFAULT_SCOPES,
         shop_name=shop_name,
         redirect_uri=redirect_uri,
-        price=base.price if base else "12.00",
-        currency=base.currency if base else "USD",
-        quantity=base.quantity if base else 999,
+        price=base.price if base else "0",
+        currency=base.currency if base else "SEK",
+        quantity=base.quantity if base else 1,
         path=path or (base.path if base else etsy_credentials_path()),
     )
     _write_credentials(stored)
@@ -322,10 +326,37 @@ def ensure_fresh_credentials(
     return updated
 
 
+def shop_id_matches(actual: str | int | None, expected: str = EXPECTED_SHOP_ID) -> bool:
+    if actual is None:
+        return False
+    return str(actual).strip() == str(expected).strip()
+
+
 def shop_name_matches(actual: str | None, expected: str = EXPECTED_SHOP_NAME) -> bool:
     if not actual:
         return False
     return actual.strip().casefold() == expected.strip().casefold()
+
+
+def shop_identity_matches(
+    *,
+    shop_id: str | int | None,
+    shop_name: str | None = None,
+    stored_shop_id: str | None = None,
+) -> bool:
+    """
+    Primary check is the numeric shop id. A matching confirmed id is accepted
+    even when the live display name differs. Name is only a secondary signal.
+    """
+    if shop_id_matches(shop_id):
+        return True
+    if (
+        stored_shop_id
+        and str(stored_shop_id).strip() not in {"", "pending", "0"}
+        and str(shop_id or "").strip() == str(stored_shop_id).strip()
+    ):
+        return True
+    return shop_name_matches(shop_name)
 
 
 def _write_credentials(credentials: EtsyCredentials) -> None:

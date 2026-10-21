@@ -29,6 +29,7 @@ from anskar.daily.ledger import (
     update_run,
 )
 from anskar.daily.lock import exclusive_lock
+from anskar.daily.notify import notify_stage
 from anskar.archive.repository import get_poem, insert_pending, utc_now
 from anskar.daily.recovery import (
     MAX_SELECTION_ATTEMPTS,
@@ -71,6 +72,8 @@ def daily_run(
     publish_instagram: InstagramFn | None = None,
     publish_etsy: EtsyFn | None = None,
     lock: Path | None = None,
+    allow_test: bool = False,
+    queue_etsy_only: bool = False,
 ) -> dict[str, object]:
     """Select, generate, pack, publish Instagram; queue or publish Etsy. Auto-approves."""
     with exclusive_lock(lock):
@@ -85,6 +88,8 @@ def daily_run(
             prepare_pack=prepare_pack,
             publish_instagram=publish_instagram,
             publish_etsy=publish_etsy,
+            allow_test=allow_test,
+            queue_etsy_only=queue_etsy_only,
         )
 
 
@@ -158,6 +163,8 @@ def _run_or_resume(
     prepare_pack: PackFn | None,
     publish_instagram: InstagramFn | None,
     publish_etsy: EtsyFn | None,
+    allow_test: bool = False,
+    queue_etsy_only: bool = False,
 ) -> dict[str, object]:
     archive = archive_db or archive_database_path()
     daily = daily_db or database_path()
@@ -166,7 +173,11 @@ def _run_or_resume(
 
     with connect(daily) as connection:
         if run_id is None:
-            active_id = begin_run(connection, dry_run=bool(dry_run))
+            active_id = begin_run(
+                connection,
+                dry_run=bool(dry_run),
+                run_kind="test" if allow_test else "daily",
+            )
             row = get_run(connection, active_id)
             assert row is not None
             is_dry = bool(dry_run)
@@ -195,6 +206,10 @@ def _run_or_resume(
 
     try:
         status = str(row["status"])
+        if status == "selected":
+            notify_stage("start", _run_detail(row, prefix="Starting"))
+        else:
+            notify_stage("start", _run_detail(row, prefix="Resuming"))
         if status == "selected":
             _step_select(
                 active_id,
@@ -250,8 +265,11 @@ def _run_or_resume(
                 packs=pack_root,
                 dry_run=is_dry,
                 publish_etsy=publish_etsy,
+                queue_etsy_only=queue_etsy_only,
             )
-            return _public(daily, active_id)
+            finished = _public(daily, active_id)
+            notify_stage("complete", _public_detail(finished))
+            return finished
         else:
             raise DailyError(f"Cannot resume from status {status}.", kind="error")
 
@@ -280,8 +298,11 @@ def _run_or_resume(
             packs=pack_root,
             dry_run=is_dry,
             publish_etsy=publish_etsy,
+            queue_etsy_only=queue_etsy_only,
         )
-        return _public(daily, active_id)
+        finished = _public(daily, active_id)
+        notify_stage("complete", _public_detail(finished))
+        return finished
     except (DailyError, ArchiveError, GenerationError, PrintError, InstagramError, EtsyError) as exc:
         kind = str(getattr(exc, "kind", "error"))
         with connect(daily) as connection:
@@ -308,6 +329,7 @@ def _run_or_resume(
                     error_kind=kind,
                     error_message=str(exc),
                 )
+        notify_stage("failed", str(exc))
         if isinstance(exc, DailyError):
             raise
         raise DailyError(str(exc), kind=kind) from exc
@@ -321,6 +343,7 @@ def _complete_after_instagram(
     packs: Path,
     dry_run: bool,
     publish_etsy: EtsyFn | None,
+    queue_etsy_only: bool = False,
 ) -> None:
     with connect(daily) as connection:
         row = get_run(connection, run_id)
@@ -341,6 +364,7 @@ def _complete_after_instagram(
         daily=daily,
         dry_run=dry_run,
         publish_etsy=publish_etsy,
+        queue_etsy_only=queue_etsy_only,
     )
 
     with connect(daily) as connection:
@@ -559,6 +583,9 @@ def _step_generate(
 ) -> None:
     from dataclasses import replace
 
+    with connect(daily) as connection:
+        row = get_run(connection, run_id)
+    notify_stage("generate", _run_detail(row) if row is not None else "")
     settings = load_settings()
     settings = replace(settings, artworks_dir=artwork_root)
     style = production_style()  # painterly + wrapped
@@ -743,6 +770,12 @@ def _step_instagram(
     dry_run: bool,
     publish_instagram: InstagramFn | None,
 ) -> None:
+    with connect(daily) as connection:
+        row = get_run(connection, run_id)
+    notify_stage(
+        "instagram",
+        _run_detail(row, extra=f"Pack {pack_id}") if row is not None else f"Pack {pack_id}",
+    )
     publisher = publish_instagram or instagram_publish
     if dry_run:
         result = publisher(pack_id, dry_run=True)
@@ -775,6 +808,7 @@ def _queue_or_publish_etsy(
     daily: Path,
     dry_run: bool,
     publish_etsy: EtsyFn | None,
+    queue_etsy_only: bool = False,
 ) -> None:
     """While Etsy is pending verification, only queue. Never fail the daily run for Etsy."""
     if not pack_id:
@@ -782,7 +816,8 @@ def _queue_or_publish_etsy(
             update_run(connection, run_id, etsy_status=ETSY_LISTING_PENDING)
         return
 
-    if not etsy_is_ready():
+    if queue_etsy_only or not etsy_is_ready():
+        notify_stage("etsy_queued", f"Pack {pack_id}")
         _write_etsy_queue_marker(packs / pack_id, status=ETSY_LISTING_PENDING)
         with connect(daily) as connection:
             update_run(
@@ -794,6 +829,7 @@ def _queue_or_publish_etsy(
 
     # Ready: publish for this new run only. Backlog still needs an explicit command.
     if dry_run:
+        notify_stage("etsy", f"Dry run for pack {pack_id}")
         if publish_etsy is not None:
             publish_etsy(pack_id, dry_run=True, packs=packs)
         else:
@@ -806,6 +842,7 @@ def _queue_or_publish_etsy(
             update_run(connection, run_id, etsy_status=ETSY_LISTING_QUEUED)
         return
 
+    notify_stage("etsy", f"Pack {pack_id}")
     publisher = publish_etsy or etsy_publish
     try:
         result = publisher(pack_id, dry_run=False, packs=packs)
@@ -995,6 +1032,38 @@ def _public(daily: Path, run_id: str) -> dict[str, object]:
         row = get_run(connection, run_id)
     assert row is not None
     return public_run(row)
+
+
+def _run_detail(row, *, prefix: str = "", extra: str = "") -> str:
+    """Short human detail for a notification body from a ledger row."""
+    parts: list[str] = []
+    if prefix:
+        parts.append(prefix.rstrip(".") + ".")
+    title = ""
+    if hasattr(row, "keys") and "poem_title" in row.keys() and row["poem_title"]:
+        title = str(row["poem_title"])
+    elif isinstance(row, dict) and row.get("poem_title"):
+        title = str(row["poem_title"])
+    if title:
+        parts.append(title)
+    poem_id = None
+    if hasattr(row, "keys") and "poem_id" in row.keys():
+        poem_id = row["poem_id"]
+    elif isinstance(row, dict):
+        poem_id = row.get("poem_id")
+    if poem_id is not None and not title:
+        parts.append(f"Poem {poem_id}")
+    if extra:
+        parts.append(extra)
+    return " ".join(parts).strip()
+
+
+def _public_detail(payload: dict[str, object]) -> str:
+    title = str(payload.get("poem_title") or "").strip()
+    pack = str(payload.get("pack_id") or "").strip()
+    etsy = str(payload.get("etsy_status") or "").strip()
+    bits = [bit for bit in (title, pack and f"pack {pack}", etsy and f"Etsy {etsy}") if bit]
+    return " · ".join(bits)
 
 
 def _iso_now() -> str:

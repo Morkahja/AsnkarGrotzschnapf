@@ -14,7 +14,10 @@ from anskar.daily.power import decide_after_run, inhibit_command, verify_rtc_wak
 
 SERVICE_NAME = "anskar-daily.service"
 TIMER_NAME = "anskar-daily.timer"
+ETSY_MAINTAIN_SERVICE = "anskar-etsy-maintain.service"
+ETSY_MAINTAIN_TIMER = "anskar-etsy-maintain.timer"
 NOON_CALENDAR = "*-*-* 12:00:00"
+ETSY_MAINTAIN_CALENDAR = "*-*-* 0/6:15:00"
 
 
 def unit_source_dir() -> Path:
@@ -67,6 +70,11 @@ def schedule_status() -> dict[str, object]:
         system_active = _systemctl(["is-active", TIMER_NAME]) == 0
     rtc = verify_rtc_wake()
     after = decide_after_run(scheduled=True, idle=None)
+    etsy_service = user_unit_dir() / ETSY_MAINTAIN_SERVICE
+    etsy_timer = user_unit_dir() / ETSY_MAINTAIN_TIMER
+    etsy_enabled = False
+    if shutil.which("systemctl") and etsy_timer.is_file():
+        etsy_enabled = _systemctl(["--user", "is-enabled", ETSY_MAINTAIN_TIMER]) == 0
     return {
         "service_installed": service.is_file(),
         "timer_installed": timer.is_file(),
@@ -86,11 +94,15 @@ def schedule_status() -> dict[str, object]:
         "wake_system": True,  # system timer capability; user timer does not wake from deep sleep
         "rtc": rtc,
         "return_to_sleep": (
-            "Depends on KDE inactivity-based suspend. "
-            "Anskar never force-suspends after a run."
+            "The noon run never suspends the computer. "
+            "Only a confirmed test-cycle may suspend, and only while the session stays idle."
         ),
         "after_run_policy": after.reason,
         "python": default_python(),
+        "etsy_maintain_service_installed": etsy_service.is_file(),
+        "etsy_maintain_timer_installed": etsy_timer.is_file(),
+        "etsy_maintain_enabled": etsy_enabled,
+        "etsy_maintain_on_calendar": ETSY_MAINTAIN_CALENDAR,
     }
 
 
@@ -110,6 +122,17 @@ def install_units(*, enable: bool = False) -> dict[str, object]:
     timer_text = timer_src.read_text(encoding="utf-8")
     service_dst.write_text(service_text, encoding="utf-8")
     timer_dst.write_text(timer_text, encoding="utf-8")
+    etsy_service_src = source / ETSY_MAINTAIN_SERVICE
+    etsy_timer_src = source / ETSY_MAINTAIN_TIMER
+    if etsy_service_src.is_file() and etsy_timer_src.is_file():
+        (destination / ETSY_MAINTAIN_SERVICE).write_text(
+            _render(etsy_service_src.read_text(encoding="utf-8")),
+            encoding="utf-8",
+        )
+        (destination / ETSY_MAINTAIN_TIMER).write_text(
+            etsy_timer_src.read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
     reloaded = False
     if shutil.which("systemctl"):
         reloaded = _systemctl(["--user", "daemon-reload"]) == 0
@@ -120,6 +143,8 @@ def install_units(*, enable: bool = False) -> dict[str, object]:
                     "Run `systemctl --user enable --now anskar-daily.timer` after fixing systemd.",
                     kind="error",
                 )
+            if (destination / ETSY_MAINTAIN_TIMER).is_file():
+                _systemctl(["--user", "enable", "--now", ETSY_MAINTAIN_TIMER])
     elif enable:
         raise DailyError(
             "Units were written, but systemctl is not available so the timer was not enabled.",

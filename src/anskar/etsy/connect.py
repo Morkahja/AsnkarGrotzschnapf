@@ -14,12 +14,15 @@ from anskar.etsy.credentials import (
     load_app_credentials,
     load_etsy_credentials,
     save_oauth_tokens,
+    shop_id_matches,
+    shop_identity_matches,
     shop_name_matches,
 )
 from anskar.etsy.errors import EtsyError
 from anskar.etsy.oauth import (
     DEFAULT_REDIRECT_URI,
     DEFAULT_SCOPES,
+    EXPECTED_SHOP_ID,
     EXPECTED_SHOP_NAME,
     begin_auth_request,
     ensure_localhost_tls,
@@ -58,7 +61,10 @@ def connect_etsy(
     print("Open this URL if the browser did not open:")
     print(auth.authorize_url)
     print(f"Waiting for Etsy callback at {auth.redirect_uri} …")
-    print("Approve access for Anskar Gortzschnapf Publisher on the Anskartprints shop.")
+    print(
+        f"Approve access for Anskar Gortzschnapf Publisher on the {EXPECTED_SHOP_NAME} shop "
+        f"(id {EXPECTED_SHOP_ID})."
+    )
     print("If the browser warns about the local HTTPS certificate, accept it for localhost only.")
     code = wait_for_authorization_code(
         redirect_uri=auth.redirect_uri,
@@ -108,13 +114,15 @@ def connect_etsy(
             "Re-run with --confirm-shop to replace it deliberately.",
             kind="credentials",
         )
-    if not shop_name_matches(shop_name) and not confirm_shop:
+    if not shop_identity_matches(shop_id=shop_id, shop_name=shop_name) and not confirm_shop:
         raise EtsyError(
-            f"Authenticated shop name is {shop_name!r}, expected {EXPECTED_SHOP_NAME!r}. "
+            f"Authenticated shop id {shop_id} ({shop_name!r}) is not the confirmed shop "
+            f"{EXPECTED_SHOP_NAME} (id {EXPECTED_SHOP_ID}). "
             "Pass --confirm-shop only if this is intentional.",
             kind="credentials",
         )
     stored = save_oauth_tokens(
+
         api_key=api_key,
         shared_secret=shared_secret,
         tokens=tokens,
@@ -149,6 +157,7 @@ def etsy_connection_status(*, path=None) -> dict[str, object]:
         "token_valid": False,
         "expires_at": None,
         "redirect_uri": DEFAULT_REDIRECT_URI,
+        "expected_shop_id": EXPECTED_SHOP_ID,
         "expected_shop_name": EXPECTED_SHOP_NAME,
     }
     try:
@@ -174,6 +183,10 @@ def etsy_connection_status(*, path=None) -> dict[str, object]:
             "expires_at": public["expires_at"],
             "redirect_uri": public["redirect_uri"],
             "has_refresh_token": public["has_refresh_token"],
+            "shop_id_matches": shop_id_matches(public["shop_id"]),
+            "name_matches": shop_name_matches(
+                public["shop_name"] if isinstance(public["shop_name"], str) else None
+            ),
         }
     )
     return report
@@ -186,13 +199,23 @@ def test_etsy_connection(*, path=None) -> dict[str, object]:
     shop = client.get_shop(creds.shop_id)
     shop_id = str(shop.get("shop_id") or creds.shop_id)
     shop_name = str(shop.get("shop_name") or "")
-    matches = shop_name_matches(shop_name)
+    id_matches_stored = str(shop_id) == str(creds.shop_id)
+    id_matches_expected = shop_id_matches(shop_id)
+    name_matches = shop_name_matches(shop_name)
+    # Numeric shop id is authoritative; display-name drift must not fail the same shop.
+    ok = id_matches_stored and shop_identity_matches(
+        shop_id=shop_id,
+        shop_name=shop_name,
+        stored_shop_id=creds.shop_id,
+    )
     return {
-        "ok": matches and str(shop_id) == str(creds.shop_id),
+        "ok": ok,
         "shop_id": shop_id,
         "shop_name": shop_name,
+        "expected_shop_id": EXPECTED_SHOP_ID,
         "expected_shop_name": EXPECTED_SHOP_NAME,
-        "name_matches": matches,
+        "shop_id_matches": id_matches_expected,
+        "name_matches": name_matches,
         "scopes": creds.scopes,
         "token_valid": creds.token_valid(),
         "integration_state": load_etsy_state(),
@@ -234,10 +257,17 @@ def _resolve_shop(
         for item in shops:
             if not isinstance(item, dict):
                 continue
-            name = str(item.get("shop_name") or "")
-            if shop_name_matches(name):
+            if shop_id_matches(item.get("shop_id")):
                 preferred = item
                 break
+        if preferred is None:
+            for item in shops:
+                if not isinstance(item, dict):
+                    continue
+                name = str(item.get("shop_name") or "")
+                if shop_name_matches(name):
+                    preferred = item
+                    break
         if preferred is None:
             if len(shops) == 1 and isinstance(shops[0], dict) and confirm_shop:
                 preferred = shops[0]
@@ -250,7 +280,7 @@ def _resolve_shop(
                     if isinstance(item, dict)
                 ]
                 raise EtsyError(
-                    f"Could not find shop {EXPECTED_SHOP_NAME!r} among {names}. "
+                    f"Could not find shop {EXPECTED_SHOP_NAME!r} (id {EXPECTED_SHOP_ID}) among {names}. "
                     "Pass --shop-id and --confirm-shop if needed.",
                     kind="credentials",
                 )

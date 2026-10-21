@@ -70,6 +70,17 @@ PYTHONPATH=src .venv/bin/python -m anskar instagram publish <pack-id> --dry-run
 
 `status` only reads the account. `prepare` writes a local JPEG and caption under `data/instagram/`. `publish --dry-run` does not create a post. A real post is a separate `publish <pack-id> --confirm` and is not part of the default workflow. A public https image URL, preferably the approved Etsy image, has to be entered in `~/.config/anskar/instagram-hosts.json` before a post can be sent. When fewer than seven days remain on the token, `instagram renew` refreshes it through Meta's `ig_refresh_token` grant.
 
+Etsy Open API credentials stay in `~/.config/anskar/etsy.json`. Register the exact callback `https://localhost:8743/etsy/callback` on the Etsy app, store the keystring and shared secret, then authorize once:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m anskar etsy setup
+PYTHONPATH=src .venv/bin/python -m anskar etsy connect
+PYTHONPATH=src .venv/bin/python -m anskar etsy status
+PYTHONPATH=src .venv/bin/python -m anskar etsy test
+```
+
+OAuth alone does not enable publishing. Seller verification stays separate (`etsy set-state`). Tokens refresh automatically when needed. Secrets are never printed.
+
 The page is `http://127.0.0.1:8765/`. Use another port with `--port`.
 
 ## Tests

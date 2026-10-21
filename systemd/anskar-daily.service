@@ -1,0 +1,17 @@
+[Unit]
+Description=Anskar Grotzschnapf daily generate and publish
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=@PROJECT_ROOT@
+Environment=PYTHONPATH=@PROJECT_ROOT@/src
+Environment=ANSKAR_SCHEDULED=1
+# Stay awake for the whole oneshot (generation + Instagram). Inhibitor ends with the process.
+ExecStart=/usr/bin/systemd-inhibit --what=idle:sleep:handle-lid-switch --who=AnskarGrotzschnapf --why="Daily artwork production" --mode=block @PYTHON@ -m anskar daily-run
+Nice=10
+# The application also takes an exclusive lock under data/daily.lock.
+
+[Install]
+WantedBy=default.target

@@ -29,9 +29,11 @@ Module boundaries:
 - `anskar.archive` — poems, rights, selection
 - `anskar.artwork` — local image generation from the pending poem
 - `anskar.lab` — manual local prompt experiments
-- `anskar.printmaker` — local print packs from an approved lab image
-- `anskar.instagram` — Instagram Login for an approved pack. A real post requires `publish --confirm`. Tokens stay outside the repository and are never printed. No post is sent until that confirmation is given.
-- `anskar-daily.service` and `anskar-daily.timer` — a later systemd schedule
+- `anskar.printmaker` — local print packs from an approved lab image, or from a production artwork in daily mode
+- `anskar.instagram` — Instagram Login. Manual `publish` still requires `--confirm`. The daily pipeline publishes automatically to `@anskargrotzschnapf` only. Tokens stay outside the repository and are never printed.
+- `anskar.etsy` — Etsy Open API digital-download listings. OAuth (`etsy setup` then `etsy connect`) stores tokens under `~/.config/anskar/` with automatic refresh. Manual `etsy publish` requires `--confirm`. OAuth success does not change seller verification. While the shop is `pending_verification`, the daily pipeline queues the print and still finishes. It publishes a listing only when the integration state is `ready`.
+- `anskar.daily` — fully automatic daily run: select → interpret → generate 1600×1600 → pack → Instagram → Etsy → mark poem used
+- `anskar-daily.service` and `anskar-daily.timer` — noon local schedule (`anskar schedule install`). Optional system units with `WakeSystem=true` are staged by `anskar schedule prepare-system` (sudo to activate; do not leave both user and system timers publishing). Production runs use `systemd-inhibit` so sleep cannot interrupt generation or Instagram. Return to sleep is never forced; KDE idle-suspend handles it when appropriate. At most one live artwork per Swedish local calendar day (`Europe/Stockholm`); `Persistent=false` prevents catch-up backlog.
 - `anskar.interpret` — local Ollama interpretation for the prompt lab and production generation
 
 ## Archive rules
@@ -56,7 +58,11 @@ Import a poem for commercial use in Sweden only when all of the following are tr
 
 Project Gutenberg's United States public-domain statement is a source fact. It is not Swedish clearance.
 
-A poem is used only after an explicit confirmation. Selection keeps one pending poem. Repeating the selection command returns that same poem until it is confirmed or skipped. Skipping dismisses the pending poem and does not mark it used.
+Commercial-use eligibility is decided at import and stored on the poem as `commercial_use_sweden`. Daily production trusts a documented `yes`. It does not repeat the Swedish-term calculation, and it does not ask for another approval of material the archive already cleared. Uncleared poem text is not published. Image-model commercial use comes from the installed model profile; an unverified profile is not publication-ready.
+
+Manual mode: a poem is used only after an explicit `select --confirm`. Selection keeps one pending poem. Repeating the selection command returns that same poem until it is confirmed or skipped. Skipping dismisses the pending poem and does not mark it used.
+
+Daily mode (`anskar daily-run`): the pipeline selects one eligible poem, auto-approves the production pack after generation and metadata checks, publishes to Instagram, and marks the poem used after Instagram succeeds. Etsy has an explicit integration state (`pending_verification`, `ready`, `disabled`). While Etsy is `pending_verification`, listings are queued only and must not block the daily run. When Etsy is `ready`, new daily runs may publish listings; backlog publishing still needs an explicit command. Partial Instagram failures are resumable. Prompt Lab and manual commands stay available and still require human confirmation where they already did.
 
 ## Artwork rules
 
@@ -64,7 +70,7 @@ The daily pipeline generates an image only for the pending poem. The poem's stor
 
 Use the local `sd-cli` executable. Do not call a paid or cloud image API. Do not reinstall or modify the installed models, runtime, or GPU drivers.
 
-Model paths, sampler settings, resolution, and the process timeout are configuration. A poem gets one successful production artwork. Never overwrite an existing PNG. Generation does not mark the poem used. The poem stays pending until a person approves the artwork.
+Model paths, sampler settings, resolution, and the process timeout are configuration. A poem gets one successful production artwork. Never overwrite an existing PNG. Generation alone does not mark the poem used. In manual mode the poem stays pending until a person confirms. In daily mode the poem is marked used after Instagram publication succeeds (Etsy may still be queued).
 
 ## Prompt lab
 

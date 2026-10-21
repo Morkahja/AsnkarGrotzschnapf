@@ -177,6 +177,143 @@ class PackTests(unittest.TestCase):
                 )
             self.assertEqual(image.read_bytes(), original)
 
+    def test_indented_archived_poem_matches_by_poem_id_and_exact_body(self):
+        """Leading spaces in archived bodies must not break rights matching."""
+        whitman = (
+            "  O Captain! my Captain! our fearful trip is done,\n"
+            "  The ship has weather’d every rack, the prize we sought is won,"
+        )
+        visual = (
+            "A vast painterly expanse of indigo and crimson swirls like a storm "
+            "over a shattered deck of light."
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            experiments = root / "experiments" / "captain"
+            experiments.mkdir(parents=True)
+            image = experiments / "run.png"
+            metadata = experiments / "run.json"
+            _write_png(image, 1600, 1600)
+            metadata.write_text(
+                json.dumps(
+                    {
+                        "experiment": "production",
+                        "poem_id": 1,
+                        "selection_id": 1,
+                        "title": "O Captain! My Captain!",
+                        "author": "Walt Whitman",
+                        "seed": 679240630,
+                        "prompt": visual,
+                        "visual_prompt": visual,
+                        "prompt_sha256": "3966d2ce91f883e8de55bb86a178433ec48dbbe3eececfdf526ca10f640f1400",
+                        "source_text": whitman,
+                        "body": whitman,
+                        "width": 1600,
+                        "height": 1600,
+                        "model_id": "z-image-turbo",
+                        "model_name": "Z-Image Turbo",
+                        "abstraction": "surreal",
+                        "style_preset": "painterly",
+                        "house_style": True,
+                        "method": "interpreted",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            database = root / "archive.sqlite"
+            _poem(
+                database,
+                whitman,
+                commercial="yes",
+                status="documented",
+                title="O Captain! My Captain!",
+                author="Walt Whitman",
+            )
+            manifest = approve_artwork(
+                metadata,
+                experiments=root / "experiments",
+                database=database,
+                settings=_settings(root),
+                runner=_Runner(),
+                packs=root / "packs",
+            )
+            self.assertEqual(png_size(image), (1600, 1600))
+            self.assertTrue(manifest["publication_ready"])
+            self.assertEqual(manifest["rights"]["poem_id"], 1)
+            self.assertEqual(manifest["rights"]["title"], "O Captain! My Captain!")
+            self.assertEqual(manifest["source_text"], whitman)
+            self.assertEqual(manifest["visual_prompt"], visual)
+            self.assertNotEqual(manifest["source_text"], manifest["visual_prompt"])
+            self.assertEqual(png_size(Path(manifest["pack_path"]) / "print" / "artwork.png"), (1600, 1600))
+
+            # Visual prompt alone must never clear rights.
+            from anskar.printmaker import _rights
+
+            refused = _rights(database, visual, poem_id=1, visual_prompt=visual)
+            self.assertFalse(refused["matched"])
+            refused_body = _rights(database, visual, poem_id=None, visual_prompt=visual)
+            self.assertFalse(refused_body["matched"])
+
+    def test_non_ready_pack_can_be_rebuilt_after_rights_fix(self):
+        whitman = "  O Captain! my Captain! our fearful trip is done,"
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            experiments = root / "experiments" / "captain"
+            experiments.mkdir(parents=True)
+            image = experiments / "run.png"
+            metadata = experiments / "run.json"
+            _write_png(image, 1600, 1600)
+            record = {
+                "experiment": "production",
+                "poem_id": 1,
+                "seed": 9,
+                "prompt": "painterly storm light",
+                "visual_prompt": "painterly storm light",
+                "prompt_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "source_text": whitman,
+                "body": whitman,
+                "width": 1600,
+                "height": 1600,
+                "model_id": "z-image-turbo",
+                "model_name": "Z-Image Turbo",
+                "method": "interpreted",
+            }
+            metadata.write_text(json.dumps(record), encoding="utf-8")
+            database = root / "archive.sqlite"
+            packs = root / "packs"
+            # First pack with empty archive → not ready.
+            _poem(database, "unrelated text", commercial="no", status="unverified")
+            first = approve_artwork(
+                metadata,
+                experiments=root / "experiments",
+                database=database,
+                settings=_settings(root),
+                runner=_Runner(),
+                packs=packs,
+            )
+            self.assertFalse(first["publication_ready"])
+            pack_path = Path(first["pack_path"])
+            self.assertTrue(pack_path.is_dir())
+            # Fix archive and rebuild the same pack id without regenerating the image.
+            with sqlite3.connect(database) as connection:
+                connection.execute("DELETE FROM poems")
+                connection.execute(
+                    "INSERT INTO poems (title, author, body, rights_verification_status, commercial_use_sweden) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    ("O Captain! My Captain!", "Walt Whitman", whitman, "documented", "yes"),
+                )
+            second = approve_artwork(
+                metadata,
+                experiments=root / "experiments",
+                database=database,
+                settings=_settings(root),
+                runner=_Runner(),
+                packs=packs,
+            )
+            self.assertTrue(second["publication_ready"])
+            self.assertEqual(second["artwork_id"], first["artwork_id"])
+            self.assertEqual(png_size(image), (1600, 1600))
+
     def test_an_undocumented_text_is_not_publication_ready(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -402,11 +539,19 @@ def _size(width: int, height: int, long_inches: int) -> dict:
     raise AssertionError(f"No {long_inches}-inch size for {width}x{height}")
 
 
-def _poem(database: Path, body: str, *, commercial: str, status: str) -> None:
+def _poem(
+    database: Path,
+    body: str,
+    *,
+    commercial: str,
+    status: str,
+    title: str = "THE LAMB",
+    author: str = "William Blake",
+) -> None:
     with sqlite3.connect(database) as connection:
         connection.execute(
             """
-            CREATE TABLE poems (
+            CREATE TABLE IF NOT EXISTS poems (
                 id INTEGER PRIMARY KEY,
                 title TEXT,
                 author TEXT,
@@ -418,7 +563,7 @@ def _poem(database: Path, body: str, *, commercial: str, status: str) -> None:
         )
         connection.execute(
             "INSERT INTO poems (title, author, body, rights_verification_status, commercial_use_sweden) VALUES (?, ?, ?, ?, ?)",
-            ("THE LAMB", "William Blake", body, status, commercial),
+            (title, author, body, status, commercial),
         )
 
 

@@ -88,6 +88,8 @@ def plan_pending(
     model_id: str = PRODUCTION_MODEL_ID,
     width: int | None = None,
     height: int | None = None,
+    prompt_transform=None,
+    prompt_validate=None,
 ) -> GenerationPlan:
     choice = production_style() if style is None else style
     active, profile = _settings_for_request(settings, model_id, width, height)
@@ -103,6 +105,12 @@ def plan_pending(
         interpreter,
         abstraction,
     )
+    if prompt_transform is not None:
+        prompt = prompt_transform(prompt)
+        if not isinstance(prompt, str) or not prompt.strip():
+            raise GenerationError("The production prompt transform returned an empty prompt.")
+    if prompt_validate is not None:
+        prompt_validate(prompt)
     return GenerationPlan(
         selection,
         prompt,
@@ -130,6 +138,8 @@ def generate_pending(
     model_id: str = PRODUCTION_MODEL_ID,
     width: int | None = None,
     height: int | None = None,
+    prompt_transform=None,
+    prompt_validate=None,
 ) -> ArtworkRecord:
     plan = plan_pending(
         database,
@@ -140,6 +150,8 @@ def generate_pending(
         model_id=model_id,
         width=width,
         height=height,
+        prompt_transform=prompt_transform,
+        prompt_validate=prompt_validate,
     )
     chosen_seed = secrets.randbelow(SEED_LIMIT) if seed is None else seed
     _validate_seed(chosen_seed)

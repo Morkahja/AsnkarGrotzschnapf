@@ -102,6 +102,22 @@ def blocking_attempt(connection: sqlite3.Connection, artwork_id: str) -> sqlite3
     ).fetchone()
 
 
+def recoverable_container_attempt(
+    connection: sqlite3.Connection, artwork_id: str
+) -> sqlite3.Row | None:
+    """Latest attempt that already has a container and may still be publishable."""
+    return connection.execute(
+        """
+        SELECT * FROM attempts
+        WHERE artwork_id = ?
+          AND container_id IS NOT NULL
+          AND state IN ('container_created', 'publishing', 'unknown', 'failed')
+        ORDER BY id DESC LIMIT 1
+        """,
+        (artwork_id,),
+    ).fetchone()
+
+
 def begin_attempt(
     connection: sqlite3.Connection,
     *,

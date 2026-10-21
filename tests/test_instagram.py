@@ -15,7 +15,7 @@ from anskar.instagram.graph import GRAPH_HOST, GraphClient, HttpResponse
 from anskar.instagram.hosting import validate_public_url
 from anskar.instagram.jpeg import jpeg_dimensions, validate_jpeg
 from anskar.instagram.r2 import R2Credentials, R2StagingAdapter, StagedObject, setup_r2_interactive
-from anskar.instagram.service import connection_status, prepare, publish, renew_token
+from anskar.instagram.service import connection_status, prepare, probe_public_url, publish, renew_token
 
 TOKEN = "test-token-value-not-a-real-secret"
 PACK = "lab-lamb"
@@ -268,6 +268,74 @@ class InstagramTests(unittest.TestCase):
         url = "https://bucket.example/key?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=abc"
         self.assertNotIn("X-Amz-Signature", redact(url))
 
+    def test_probe_uses_get_because_presigned_head_is_forbidden(self):
+        """R2 signs GET only. HEAD on the same URL returns 403 (the dry-run failure)."""
+        import http.server
+        import threading
+        from urllib.parse import urlparse
+
+        jpeg = _jpeg(64, 64)
+        seen: list[str] = []
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, format, *args):  # noqa: A003
+                return
+
+            def do_HEAD(self):  # noqa: N802
+                seen.append("HEAD")
+                self.send_response(403)
+                self.end_headers()
+
+            def do_GET(self):  # noqa: N802
+                seen.append("GET")
+                self.server.last_query = urlparse(self.path).query  # type: ignore[attr-defined]
+                self.send_response(200)
+                self.send_header("Content-Type", "image/jpeg")
+                self.send_header("Content-Length", str(len(jpeg)))
+                self.end_headers()
+                self.wfile.write(jpeg)
+
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        server.last_query = ""  # type: ignore[attr-defined]
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            port = server.server_address[1]
+            signature = "X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=test-sig"
+            local = f"http://127.0.0.1:{port}/instagram/pack.jpg?{signature}"
+            with patch("anskar.instagram.hosting.validate_public_url", side_effect=lambda u, **k: u):
+                probe_public_url(local)
+            self.assertEqual(seen, ["GET"])
+            self.assertNotIn("HEAD", seen)
+            self.assertIn("X-Amz-Signature=test-sig", server.last_query)  # type: ignore[attr-defined]
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_dry_run_cleans_up_when_a_head_style_probe_fails(self):
+        """If accessibility check fails after upload, the temporary R2 object is still deleted."""
+        self._pack()
+        staging = FakeStaging()
+
+        def head_style_probe(url: str) -> None:
+            raise InstagramError("The image URL is not publicly readable (HTTP 403).", kind="url")
+
+        with self.assertRaises(InstagramError) as caught:
+            publish(
+                PACK,
+                dry_run=True,
+                packs=self.packs,
+                destination=self.posts / PACK,
+                hosts=_hosts(),
+                database=self.database,
+                jpeg_writer=_writer(),
+                staging=staging,
+                probe=head_style_probe,
+            )
+        self.assertEqual(caught.exception.kind, "url")
+        self.assertEqual(staging.uploads, 1)
+        self.assertEqual(staging.deletes, 1)
+
     def test_permission_failure_is_kept_and_redacted(self):
         self._pack()
         transport = ScriptedTransport()
@@ -314,6 +382,8 @@ class InstagramTests(unittest.TestCase):
         self.assertEqual(kept.deletes, 0)
         second = ScriptedTransport()
         second.add("GET", "/me", _profile())
+        # wait_until_ready + reconcile status both read the container
+        second.add("GET", "/container-1", _json({"id": "media-9", "status_code": "PUBLISHED"}))
         second.add("GET", "/container-1", _json({"id": "media-9", "status_code": "PUBLISHED"}))
         second.add("GET", "/media-9", _json({"id": "media-9", "permalink": "https://www.instagram.com/p/recovered/"}))
         result = self._confirm(GraphClient(self.token, transport=second), staging=kept)
@@ -321,6 +391,105 @@ class InstagramTests(unittest.TestCase):
         self.assertEqual(result["media_id"], "media-9")
         self.assertFalse(any(method == "POST" for method, _, _ in second.calls))
         self.assertEqual(kept.deletes, 1)
+
+    def test_waits_through_in_progress_before_publish(self):
+        self._pack()
+        transport = ScriptedTransport()
+        transport.add("GET", "/me", _profile())
+        transport.add("POST", "/media", _json({"id": "container-1"}))
+        transport.add("GET", "/container-1", _json({"id": "container-1", "status_code": "IN_PROGRESS"}))
+        transport.add("GET", "/container-1", _json({"id": "container-1", "status_code": "FINISHED"}))
+        transport.add("POST", "/media_publish", _json({"id": "media-1"}))
+        transport.add("GET", "/media-1", _json({"id": "media-1", "permalink": "https://www.instagram.com/p/ready/"}))
+        result = self._confirm(GraphClient(self.token, transport=transport), staging=FakeStaging())
+        self.assertTrue(result["published"])
+        self.assertEqual(result["media_id"], "media-1")
+        publish_calls = [call for call in transport.calls if call[0] == "POST" and "media_publish" in call[1]]
+        self.assertEqual(len(publish_calls), 1)
+
+    def test_code_9007_rechecks_status_and_retries_same_container(self):
+        self._pack()
+        transport = ScriptedTransport()
+        transport.add("GET", "/me", _profile())
+        transport.add("POST", "/media", _json({"id": "container-1"}))
+        transport.add("GET", "/container-1", _json({"id": "container-1", "status_code": "FINISHED"}))
+        transport.add(
+            "POST",
+            "/media_publish",
+            _error(400, 9007, 2207027, "Media ID is not available"),
+        )
+        transport.add("GET", "/container-1", _json({"id": "container-1", "status_code": "IN_PROGRESS"}))
+        transport.add("GET", "/container-1", _json({"id": "container-1", "status_code": "FINISHED"}))
+        transport.add("POST", "/media_publish", _json({"id": "media-2"}))
+        transport.add("GET", "/media-2", _json({"id": "media-2", "permalink": "https://www.instagram.com/p/retry/"}))
+        staging = FakeStaging()
+        result = self._confirm(GraphClient(self.token, transport=transport), staging=staging)
+        self.assertTrue(result["published"])
+        self.assertEqual(result["media_id"], "media-2")
+        self.assertEqual(result["container_id"], "container-1")
+        media_posts = [call for call in transport.calls if call[0] == "POST" and call[1].endswith("/media")]
+        self.assertEqual(len(media_posts), 1)
+        self.assertEqual(staging.deletes, 1)
+
+    def test_expired_container_allows_replacement_after_duplicate_check(self):
+        self._pack()
+        first = ScriptedTransport()
+        first.add("GET", "/me", _profile())
+        first.add("POST", "/media", _json({"id": "container-old"}))
+        first.add("GET", "/container-old", _json({"id": "container-old", "status_code": "EXPIRED"}))
+        with self.assertRaises(InstagramError) as caught:
+            self._confirm(GraphClient(self.token, transport=first), staging=FakeStaging())
+        self.assertEqual(caught.exception.kind, "media")
+        second = ScriptedTransport()
+        second.add("GET", "/me", _profile())
+        second.add("GET", "/container-old", _json({"id": "container-old", "status_code": "EXPIRED"}))
+        second.add("GET", "/media", _json({"data": []}))
+        second.add("POST", "/media", _json({"id": "container-new"}))
+        second.add("GET", "/container-new", _json({"id": "container-new", "status_code": "FINISHED"}))
+        second.add("POST", "/media_publish", _json({"id": "media-new"}))
+        second.add("GET", "/media-new", _json({"id": "media-new", "permalink": "https://www.instagram.com/p/new/"}))
+        result = self._confirm(GraphClient(self.token, transport=second), staging=FakeStaging())
+        self.assertTrue(result["published"])
+        self.assertEqual(result["container_id"], "container-new")
+        self.assertEqual(result["media_id"], "media-new")
+
+    def test_failed_9007_resume_reuses_finished_container(self):
+        """A failed attempt with a still-FINISHED container must not create another."""
+        self._pack()
+        first = ScriptedTransport()
+        first.add("GET", "/me", _profile())
+        first.add("POST", "/media", _json({"id": "container-1"}))
+        first.add("GET", "/container-1", _json({"id": "container-1", "status_code": "FINISHED"}))
+        for _ in range(3):
+            first.add(
+                "POST",
+                "/media_publish",
+                _error(400, 9007, 2207027, "Media ID is not available"),
+            )
+            first.add("GET", "/container-1", _json({"id": "container-1", "status_code": "FINISHED"}))
+            first.add("GET", "/container-1", _json({"id": "container-1", "status_code": "FINISHED"}))
+        kept = FakeStaging()
+        with self.assertRaises(InstagramError):
+            self._confirm(GraphClient(self.token, transport=first), staging=kept)
+        self.assertEqual(kept.deletes, 0)
+        second = ScriptedTransport()
+        second.add("GET", "/me", _profile())
+        # reconcile wait + reconcile status + publish wait
+        for _ in range(3):
+            second.add("GET", "/container-1", _json({"id": "container-1", "status_code": "FINISHED"}))
+        second.add("POST", "/media_publish", _json({"id": "media-final"}))
+        second.add(
+            "GET",
+            "/media-final",
+            _json({"id": "media-final", "permalink": "https://www.instagram.com/p/final/"}),
+        )
+        result = self._confirm(GraphClient(self.token, transport=second), staging=kept)
+        self.assertTrue(result["published"])
+        self.assertEqual(result["container_id"], "container-1")
+        create_calls = [
+            url for method, url, _ in second.calls if method == "POST" and url.rstrip("/").endswith("/media")
+        ]
+        self.assertEqual(create_calls, [])
 
     def test_renewal_waits_until_the_last_week_and_hides_the_token(self):
         later = datetime.now(timezone.utc) + timedelta(days=40)

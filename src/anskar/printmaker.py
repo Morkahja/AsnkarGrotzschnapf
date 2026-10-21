@@ -98,7 +98,11 @@ def artwork_id(record: dict) -> str:
     experiment = str(record.get("experiment") or "ungrouped")
     seed = record.get("seed")
     digest = str(record.get("prompt_sha256") or "nosha")[:8]
-    raw = f"lab-{experiment}-seed-{seed}-{digest}"
+    if experiment == "production":
+        poem_id = record.get("poem_id") or "x"
+        raw = f"production-poem-{poem_id}-seed-{seed}-{digest}"
+    else:
+        raw = f"lab-{experiment}-seed-{seed}-{digest}"
     cleaned = re.sub(r"[^a-z0-9-]+", "-", raw.lower()).strip("-")
     return cleaned[:80] or "lab-artwork"
 
@@ -141,7 +145,23 @@ def approve_artwork(
     pack_id = artwork_id(record)
     destination = (packs if packs is not None else packs_dir()) / pack_id
     if destination.exists():
-        raise PrintError(f"A print pack already exists: {destination}. Nothing was overwritten.")
+        manifest_path = destination / "manifest.json"
+        existing: dict | None = None
+        if manifest_path.is_file():
+            try:
+                loaded = json.loads(manifest_path.read_text(encoding="utf-8"))
+                existing = loaded if isinstance(loaded, dict) else None
+            except (OSError, json.JSONDecodeError):
+                existing = None
+        # Never overwrite a ready or already-published pack. A failed rights check
+        # may leave a non-ready pack; rebuild it from the same original image.
+        if existing is not None and (
+            existing.get("publication_ready")
+            or existing.get("published")
+            or existing.get("instagram_published")
+        ):
+            raise PrintError(f"A print pack already exists: {destination}. Nothing was overwritten.")
+        shutil.rmtree(destination)
     destination.mkdir(parents=True)
     try:
         return _fill_pack(
@@ -198,7 +218,12 @@ def _fill_pack(
     shutil.copy2(print_path, etsy / "print.png")
     if jpeg_path.is_file():
         shutil.copy2(jpeg_path, etsy / "print.jpg")
-    rights = _rights(database, str(record.get("source_text") or record.get("body") or ""))
+    rights = _rights(
+        database,
+        str(record.get("source_text") or record.get("body") or ""),
+        poem_id=_optional_poem_id(record),
+        visual_prompt=str(record.get("visual_prompt") or record.get("prompt") or ""),
+    )
     caption = _instagram_caption(rights, record)
     spec_met = meets_print_specification(source_pixels, measured, "none")
     model_commercial = _model_commercial(record)
@@ -242,6 +267,9 @@ def _fill_pack(
         "print_specification_met": spec_met,
         "published": False,
         "rights": rights,
+        "poem_id": rights.get("poem_id") or _optional_poem_id(record),
+        "title": rights.get("title") or record.get("title"),
+        "author": rights.get("author") or record.get("author"),
         "source_text": record.get("source_text") or record.get("body") or "",
         "source_sha256": record.get("source_sha256"),
         "interpretation": record.get("interpretation") or "",
@@ -376,8 +404,35 @@ def _write_preview(source: Path, destination: Path, pixels: tuple[int, int]) -> 
     return target, "downscale"
 
 
-def _rights(database: Path, source_text: str) -> dict:
-    matched = _matching_poem(database, source_text)
+def _optional_poem_id(record: dict) -> int | None:
+    raw = record.get("poem_id")
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, int):
+        return raw
+    if isinstance(raw, str) and raw.strip().isdigit():
+        return int(raw.strip())
+    return None
+
+
+def _normalize_poem_text(text: str) -> str:
+    """Normalize newlines only. Do not strip — archived poems may indent lines."""
+    return text.replace("\r\n", "\n")
+
+
+def _rights(
+    database: Path,
+    source_text: str,
+    *,
+    poem_id: int | None = None,
+    visual_prompt: str = "",
+) -> dict:
+    matched = _matching_poem(
+        database,
+        source_text,
+        poem_id=poem_id,
+        visual_prompt=visual_prompt,
+    )
     if matched is None:
         return {
             "matched": False,
@@ -405,15 +460,40 @@ def _rights(database: Path, source_text: str) -> dict:
     }
 
 
-def _matching_poem(database: Path, source_text: str) -> sqlite3.Row | None:
-    text = source_text.replace("\r\n", "\n").strip()
+def _matching_poem(
+    database: Path,
+    source_text: str,
+    *,
+    poem_id: int | None = None,
+    visual_prompt: str = "",
+) -> sqlite3.Row | None:
+    text = _normalize_poem_text(source_text)
     if text == "":
+        return None
+    # The visual prompt is the AI interpretation — never treat it as the poem.
+    visual = _normalize_poem_text(visual_prompt)
+    if visual and text == visual:
         return None
     if not database.is_file():
         return None
     with sqlite3.connect(f"file:{database}?mode=ro", uri=True) as connection:
         connection.row_factory = sqlite3.Row
-        row = connection.execute(
+        if poem_id is not None:
+            row = connection.execute(
+                """
+                SELECT id, title, author, body, rights_verification_status, commercial_use_sweden
+                FROM poems
+                WHERE id = ?
+                """,
+                (poem_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            archived = _normalize_poem_text(str(row["body"]))
+            if text != archived:
+                return None
+            return row
+        return connection.execute(
             """
             SELECT id, title, author, body, rights_verification_status, commercial_use_sweden
             FROM poems
@@ -421,7 +501,6 @@ def _matching_poem(database: Path, source_text: str) -> sqlite3.Row | None:
             """,
             (text,),
         ).fetchone()
-    return row
 
 
 def _instagram_caption(rights: dict, record: dict) -> str:

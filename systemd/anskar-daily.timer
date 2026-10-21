@@ -1,0 +1,12 @@
+[Unit]
+Description=Run Anskar Grotzschnapf once per day at noon
+
+[Timer]
+OnCalendar=*-*-* 12:00:00
+Persistent=false
+Unit=anskar-daily.service
+# Softens load if several machines share the same clock. Does not create a backlog.
+RandomizedDelaySec=10m
+
+[Install]
+WantedBy=timers.target

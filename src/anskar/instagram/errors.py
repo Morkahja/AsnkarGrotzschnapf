@@ -12,9 +12,18 @@ _SECRETISH = re.compile(r"(secret[_-]?access[_-]?key|aws_secret)[=:]\s*\S+", re.
 class InstagramError(Exception):
     """A local or Instagram failure that is safe to show."""
 
-    def __init__(self, message: str, *, kind: str = "error") -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        kind: str = "error",
+        code: int | None = None,
+        subcode: int | None = None,
+    ) -> None:
         super().__init__(redact(message))
         self.kind = kind
+        self.code = code
+        self.subcode = subcode
 
 
 def redact(text: str, secret: str | None = None) -> str:

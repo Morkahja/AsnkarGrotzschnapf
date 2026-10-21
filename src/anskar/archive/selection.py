@@ -26,11 +26,14 @@ def select_poem(
     *,
     chooser: Chooser | None = None,
     selected_at: str | None = None,
+    exclude_poem_ids: set[int] | frozenset[int] | None = None,
 ) -> Selection:
     pending = get_pending(connection)
     if pending is not None:
         return pending
     eligible = list_eligible(connection)
+    if exclude_poem_ids:
+        eligible = [poem for poem in eligible if poem.id not in exclude_poem_ids]
     if not eligible:
         raise NoEligiblePoemError("No eligible unused poem is available.")
     poem = (chooser or RandomChooser()).choice(eligible)

@@ -1,0 +1,22 @@
+[Unit]
+Description=Anskar Grotzschnapf daily generate and publish (system wake)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=@USER@
+Group=@USER@
+WorkingDirectory=@PROJECT_ROOT@
+Environment=HOME=@HOME@
+Environment=USER=@USER@
+Environment=PYTHONPATH=@PROJECT_ROOT@/src
+Environment=XDG_RUNTIME_DIR=/run/user/@UID@
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/@UID@/bus
+Environment=ANSKAR_SCHEDULED=1
+# Never run the artist as root. Inhibit sleep only while this oneshot runs.
+ExecStart=/usr/bin/systemd-inhibit --what=idle:sleep:handle-lid-switch --who=AnskarGrotzschnapf --why="Daily artwork production" --mode=block @PYTHON@ -m anskar daily-run
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

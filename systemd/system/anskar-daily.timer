@@ -1,0 +1,14 @@
+[Unit]
+Description=Wake the computer and run Anskar Grotzschnapf once per day at noon
+
+[Timer]
+OnCalendar=*-*-* 12:00:00
+Persistent=false
+WakeSystem=true
+AccuracySec=1min
+Unit=anskar-daily.service
+# Delay after wake. Does not backlog missed days (Persistent=false).
+RandomizedDelaySec=10m
+
+[Install]
+WantedBy=timers.target

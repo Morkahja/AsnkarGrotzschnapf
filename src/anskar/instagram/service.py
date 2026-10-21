@@ -27,13 +27,16 @@ from anskar.instagram.ledger import (
     list_attempts,
     public_attempt,
     published_attempt,
+    recoverable_container_attempt,
     update_attempt,
 )
 from anskar.instagram.posts import assert_publishable, prepare_post
 from anskar.instagram.r2 import R2StagingAdapter, stage_jpeg
 
+# Meta: poll container status until FINISHED before media_publish.
 POLL_INTERVAL_SECONDS = 5.0
-MAX_POLLS = 24
+MAX_POLLS = 24  # about two minutes
+PUBLISH_NOT_READY_RETRIES = 3
 
 
 def posts_root() -> Path:
@@ -226,25 +229,45 @@ def publish(
     stored = credentials or load_credentials()
     graph = client or GraphClient(stored.access_token, version=stored.graph_version)
     account = _require_account(stored, graph)
+    sleeper = sleep or _sleep
     creation_id = None
-    if blocking is not None:
+    prior = blocking
+    if prior is None:
+        with connect(db) as connection:
+            prior = recoverable_container_attempt(connection, str(record["artwork_id"]))
+    if prior is not None:
         creation_id = _reconcile(
             graph,
-            blocking,
+            prior,
             account["user_id"],
             str(record["caption"]),
             confirm=confirm,
             replace_unknown=replace_unknown,
             database=db,
             staging=staging,
+            sleep=sleeper,
         )
         if isinstance(creation_id, dict):
             return creation_id
     if creation_id is None:
-        creation_id = _stage_and_create(graph, db, record, account["user_id"], staging=staging, probe=probe)
-    _wait_until_ready(graph, db, record, creation_id, sleep=sleep or _sleep)
-    return _publish_container(graph, db, record, account["user_id"], creation_id, staging=staging)
-
+        creation_id = _stage_and_create(
+            graph,
+            db,
+            record,
+            account["user_id"],
+            staging=staging,
+            probe=probe or probe_public_url,
+        )
+    _wait_until_ready(graph, db, record, creation_id, sleep=sleeper)
+    return _publish_container(
+        graph,
+        db,
+        record,
+        account["user_id"],
+        creation_id,
+        staging=staging,
+        sleep=sleeper,
+    )
 
 def list_pack_attempts(pack_id: str, *, database: Path | None = None) -> list[dict[str, object]]:
     with connect(database or database_path()) as connection:
@@ -252,17 +275,18 @@ def list_pack_attempts(pack_id: str, *, database: Path | None = None) -> list[di
 
 
 def probe_public_url(url: str) -> None:
+    """Unauthenticated GET. R2 presigned URLs are signed for GET; HEAD returns 403."""
     from anskar.instagram.hosting import validate_public_url
 
     validate_public_url(url)
-    request = urllib.request.Request(url, method="HEAD")
+    # Keep the URL byte-for-byte after validation; do not rebuild or strip the query.
+    request = urllib.request.Request(url, method="GET")
     try:
         with urllib.request.urlopen(request, timeout=20) as response:
             status = response.status
+            body = response.read(64)
             content_type = response.headers.get("Content-Type", "")
     except urllib.error.HTTPError as exc:
-        if exc.code == 405:
-            return
         raise InstagramError(
             f"The image URL is not publicly readable (HTTP {exc.code}).",
             kind="url",
@@ -273,6 +297,8 @@ def probe_public_url(url: str) -> None:
         raise InstagramError("The image URL could not be reached.", kind="url") from exc
     if status >= 400:
         raise InstagramError(f"The image URL is not publicly readable (HTTP {status}).", kind="url")
+    if not body.startswith(b"\xff\xd8"):
+        raise InstagramError("The image URL did not return a JPEG.", kind="url")
     if content_type and "image" not in content_type.lower():
         raise InstagramError("The image URL did not return an image.", kind="url")
 
@@ -385,6 +411,7 @@ def _reconcile(
     replace_unknown: bool,
     database: Path,
     staging: R2StagingAdapter | None = None,
+    sleep=None,
 ) -> str | dict[str, object] | None:
     container_id = attempt["container_id"]
     if not container_id:
@@ -407,7 +434,14 @@ def _reconcile(
             "pass --confirm --replace-unknown to allow another attempt.",
             kind="unknown",
         )
+    record = {
+        "artwork_id": attempt["artwork_id"],
+        "pack_id": attempt["pack_id"],
+        "image_sha256": attempt["image_sha256"],
+        "caption_sha256": attempt["caption_sha256"],
+    }
     try:
+        _wait_until_ready(client, database, record, str(container_id), sleep=sleep)
         status = client.container_status(str(container_id))
     except InstagramError as exc:
         if exc.kind == "timeout":
@@ -415,6 +449,12 @@ def _reconcile(
                 "Checking the earlier container timed out. No new container was created.",
                 kind="timeout",
             ) from exc
+        if exc.kind == "media":
+            # ERROR / EXPIRED from wait — check for an existing post, else allow a new container.
+            matched = _matching_media(client, user_id, caption)
+            if matched is not None:
+                return _record_published(database, attempt["id"], matched, staging=staging)
+            return None
         raise
     code = str(status.get("status_code") or "").upper()
     if code == "PUBLISHED":
@@ -426,6 +466,8 @@ def _reconcile(
             staging=staging,
         )
     if code == "FINISHED":
+        with connect(database) as connection:
+            update_attempt(connection, attempt["id"], state="container_created")
         return str(container_id)
     if code in {"ERROR", "EXPIRED"}:
         with connect(database) as connection:
@@ -436,16 +478,14 @@ def _reconcile(
                 error_kind="media",
                 error_message=f"The media container is {code}.",
             )
-        raise InstagramError(
-            f"The earlier container is {code} and was kept as a failed attempt. "
-            "Run publish --confirm again to create a new container.",
-            kind="media",
-        )
+        matched = _matching_media(client, user_id, caption)
+        if matched is not None:
+            return _record_published(database, attempt["id"], matched, staging=staging)
+        return None
     raise InstagramError(
-        "The earlier container is still processing. No new container was created.",
+        f"The earlier container is still {code or 'processing'}. No new container was created.",
         kind="unknown",
     )
-
 
 def _create_container(
     client: GraphClient,
@@ -557,7 +597,10 @@ def _publish_container(
     container_id: str,
     *,
     staging: R2StagingAdapter | None = None,
+    sleep=None,
 ) -> dict[str, object]:
+    if sleep is None:
+        sleep = _sleep
     attempt_id = _attempt_for_container(database, str(record["artwork_id"]), container_id)
     if attempt_id is None:
         with connect(database) as connection:
@@ -575,24 +618,76 @@ def _publish_container(
     else:
         with connect(database) as connection:
             update_attempt(connection, attempt_id, state="publishing")
-    try:
-        media_id = client.publish(user_id, container_id)
-    except InstagramError as exc:
-        state = "unknown" if exc.kind == "timeout" else "failed"
+    media_id: str | None = None
+    last_error: InstagramError | None = None
+    for attempt in range(PUBLISH_NOT_READY_RETRIES):
+        try:
+            media_id = client.publish(user_id, container_id)
+            break
+        except InstagramError as exc:
+            last_error = exc
+            if exc.kind == "timeout":
+                with connect(database) as connection:
+                    update_attempt(
+                        connection,
+                        attempt_id,
+                        state="unknown",
+                        error_kind="timeout",
+                        error_message=str(exc),
+                    )
+                raise InstagramError(
+                    "Publishing timed out. The next attempt will check this container before creating another.",
+                    kind="timeout",
+                ) from exc
+            if not _is_media_not_ready(exc):
+                with connect(database) as connection:
+                    update_attempt(
+                        connection,
+                        attempt_id,
+                        state="failed",
+                        error_kind=exc.kind,
+                        error_message=str(exc),
+                    )
+                raise
+            # Code 9007: container not ready yet — re-check status, do not create another.
+            try:
+                status = client.container_status(container_id)
+            except InstagramError:
+                status = {}
+            code = str(status.get("status_code") or "").upper()
+            if code == "PUBLISHED":
+                published_id = str(status.get("id") or container_id)
+                return _record_published(
+                    database,
+                    attempt_id,
+                    {"id": published_id, "permalink": _permalink(client, published_id)},
+                    staging=staging,
+                )
+            if code in {"ERROR", "EXPIRED"}:
+                with connect(database) as connection:
+                    update_attempt(
+                        connection,
+                        attempt_id,
+                        state="failed",
+                        error_kind="media",
+                        error_message=f"The media container is {code} after publish code 9007.",
+                    )
+                raise InstagramError(f"The media container is {code}.", kind="media") from exc
+            if attempt + 1 >= PUBLISH_NOT_READY_RETRIES:
+                break
+            sleep(POLL_INTERVAL_SECONDS)
+            _wait_until_ready(client, database, record, container_id, sleep=sleep)
+    if media_id is None:
         with connect(database) as connection:
             update_attempt(
                 connection,
                 attempt_id,
-                state=state,
-                error_kind=exc.kind,
-                error_message=str(exc),
+                state="failed",
+                error_kind=last_error.kind if last_error else "api",
+                error_message=str(last_error) if last_error else "Publish did not return a media id.",
             )
-        if exc.kind == "timeout":
-            raise InstagramError(
-                "Publishing timed out. The next attempt will check this container before creating another.",
-                kind="timeout",
-            ) from exc
-        raise
+        assert last_error is not None
+        raise last_error
     permalink = _permalink(client, media_id)
     staging_key = _staging_key_for(database, attempt_id) or (
         str(record["staging_key"]) if record.get("staging_key") else None
@@ -617,6 +712,13 @@ def _publish_container(
         "attempt_id": attempt_id,
         "staging_deleted": bool(staging_key),
     }
+
+
+def _is_media_not_ready(exc: InstagramError) -> bool:
+    if exc.code == 9007 or exc.subcode == 2207027:
+        return True
+    text = str(exc).lower()
+    return "9007" in text or "media id is not available" in text
 
 
 def _record_published(

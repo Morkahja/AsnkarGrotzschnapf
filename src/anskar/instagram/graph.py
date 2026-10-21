@@ -184,7 +184,7 @@ def _api_error(status: int, payload: dict[str, object], token: str) -> Instagram
         detail += f", subcode {subcode})" if subcode is not None else ")"
     if trace:
         detail = f"{detail} fbtrace_id={trace}"
-    return InstagramError(detail, kind=kind)
+    return InstagramError(detail, kind=kind, code=code, subcode=subcode)
 
 
 def _int(value: object) -> int | None:

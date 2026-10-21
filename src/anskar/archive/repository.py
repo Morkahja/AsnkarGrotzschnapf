@@ -102,6 +102,16 @@ def list_eligible(connection: sqlite3.Connection) -> list[Poem]:
     return [_poem_from_row(row) for row in rows]
 
 
+def get_poem(connection: sqlite3.Connection, poem_id: int) -> Poem | None:
+    row = connection.execute(
+        f"SELECT {POEM_COLUMNS} FROM poems WHERE id = ?",
+        (poem_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    return _poem_from_row(row)
+
+
 def get_pending(connection: sqlite3.Connection) -> Selection | None:
     row = connection.execute(
         f"""

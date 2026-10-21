@@ -7,6 +7,7 @@ data/sources/
 data/artworks/
 data/experiments/
 data/instagram/
+data/systemd-system/
 data/*.sqlite
 data/*.sqlite3
 *.sqlite

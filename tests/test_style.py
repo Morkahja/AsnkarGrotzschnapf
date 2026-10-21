@@ -22,8 +22,9 @@ class StyleTests(unittest.TestCase):
             PRESETS["painterly"],
             "Create a poetic fine-art image inspired by the following text. "
             "Use a painterly, softly textured, symbolic visual language with refined composition, "
-            "subtle abstraction, and a gallery-art aesthetic. "
-            "Favor emotional resonance, atmosphere, and visual poetry over literal depiction. "
+            "subtle abstraction, expressive brushwork, and a gallery-art aesthetic. "
+            "Favor emotional resonance, atmosphere, metaphor, and visual poetry over literal depiction. "
+            "Do not render a photographic animal, child, or portrait. "
             "Avoid a plain photorealistic or stock-photo look.",
         )
         self.assertEqual(

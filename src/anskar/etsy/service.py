@@ -29,7 +29,149 @@ from anskar.etsy.store import (
 )
 from anskar.printmaker import packs_dir
 
-__all__ = ["etsy_configured", "align_listing", "publish_pack", "published_listing"]
+__all__ = [
+    "etsy_configured",
+    "align_listing",
+    "refresh_listing_descriptions",
+    "refresh_listing_images",
+    "publish_pack",
+    "published_listing",
+]
+
+
+def refresh_listing_descriptions(
+    *,
+    packs: Path | None = None,
+    database: Path | None = None,
+    credentials: EtsyCredentials | None = None,
+    client: EtsyClient | None = None,
+) -> dict[str, object]:
+    """Rewrite title and description on every active listing from the current template."""
+    if not etsy_is_ready():
+        raise EtsyError(
+            "Etsy seller state is not ready. Listings stay queued until "
+            "`anskar etsy set-state ready` after seller verification.",
+            kind="credentials",
+        )
+    root = packs or packs_dir()
+    db = database or etsy_database_path()
+    stored = credentials or ensure_fresh_credentials()
+    graph = client or EtsyClient(stored)
+    from anskar.etsy.store import active_listings
+
+    updated: list[dict[str, object]] = []
+    errors: list[str] = []
+    with connect(db) as connection:
+        rows = list(active_listings(connection))
+    for row in rows:
+        listing_id = str(row["listing_id"] or "")
+        pack_id = str(row["pack_id"] or "")
+        if not listing_id or not pack_id:
+            continue
+        try:
+            _folder, manifest = load_pack(pack_id, packs=root)
+            fields = listing_fields(manifest)
+            graph.update_listing(
+                listing_id,
+                {
+                    "title": fields["title"],
+                    "description": fields["description"],
+                    "tags": fields["tags"],
+                    "who_made": fields["who_made"],
+                    "when_made": fields["when_made"],
+                    "is_supply": False,
+                },
+            )
+            # Keep the local pack listing.txt in sync for operators.
+            listing_txt = root / pack_id / "etsy" / "listing.txt"
+            if listing_txt.parent.is_dir():
+                listing_txt.write_text(str(fields["description"]) + "\n", encoding="utf-8")
+            updated.append(
+                {
+                    "pack_id": pack_id,
+                    "listing_id": listing_id,
+                    "listing_url": listing_url(listing_id),
+                    "title": fields["title"],
+                }
+            )
+        except (EtsyError, OSError, TypeError, ValueError) as exc:
+            errors.append(f"{pack_id or listing_id}: {exc}")
+    return {"updated": updated, "errors": errors, "count": len(updated)}
+
+
+def refresh_listing_images(
+    *,
+    packs: Path | None = None,
+    database: Path | None = None,
+    credentials: EtsyCredentials | None = None,
+    client: EtsyClient | None = None,
+    dry_run: bool = False,
+    rng=None,
+) -> dict[str, object]:
+    """
+    Rebuild web-preview gallery files and replace photos on every active listing.
+
+    The paid download file is left alone. Listing photos become preview.jpg /
+    preview.png plus detail crops from the preview — never the print master.
+    """
+    if not dry_run and not etsy_is_ready():
+        raise EtsyError(
+            "Etsy seller state is not ready. Listings stay queued until "
+            "`anskar etsy set-state ready` after seller verification.",
+            kind="credentials",
+        )
+    root = packs or packs_dir()
+    db = database or etsy_database_path()
+    from anskar.etsy.store import active_listings
+
+    updated: list[dict[str, object]] = []
+    errors: list[str] = []
+    with connect(db) as connection:
+        rows = list(active_listings(connection))
+    graph: EtsyClient | None = None
+    if not dry_run:
+        stored = credentials or ensure_fresh_credentials()
+        graph = client or EtsyClient(stored)
+    for row in rows:
+        listing_id = str(row["listing_id"] or "")
+        pack_id = str(row["pack_id"] or "")
+        if not listing_id or not pack_id:
+            continue
+        try:
+            folder, _manifest = load_pack(pack_id, packs=root)
+            preview_image(folder)
+            gallery = ensure_gallery_details(folder, rng=rng)
+            if any(path.name == "print.png" for path in gallery):
+                raise EtsyError(
+                    f"Pack {pack_id} gallery still includes the print master.",
+                    kind="media",
+                )
+            if dry_run:
+                updated.append(
+                    {
+                        "pack_id": pack_id,
+                        "listing_id": listing_id,
+                        "listing_url": listing_url(listing_id),
+                        "images": [path.name for path in gallery],
+                        "dry_run": True,
+                    }
+                )
+                continue
+            assert graph is not None
+            _sync_listing_gallery(graph, listing_id, gallery, replace=True)
+            _assert_assets_attached(graph, listing_id, expected_images=len(gallery))
+            updated.append(
+                {
+                    "pack_id": pack_id,
+                    "listing_id": listing_id,
+                    "listing_url": listing_url(listing_id),
+                    "images": [path.name for path in gallery],
+                    "dry_run": False,
+                }
+            )
+        except (EtsyError, OSError, TypeError, ValueError) as exc:
+            errors.append(f"{pack_id or listing_id}: {exc}")
+    return {"updated": updated, "errors": errors, "count": len(updated), "dry_run": dry_run}
 
 
 def align_listing(
@@ -77,7 +219,7 @@ def align_listing(
         },
     )
     gallery = ensure_gallery_details(folder, rng=rng)
-    _sync_listing_gallery(graph, listing_id, gallery)
+    _sync_listing_gallery(graph, listing_id, gallery, replace=True)
     apply_listing_attributes(
         graph,
         listing_id,
@@ -137,9 +279,9 @@ def publish_pack(
         terminal = find_by_artwork(
             connection,
             artwork_id,
-            states=("active", "sold", "expired"),
+            states=("active", "sold", "expired", "removed"),
         )
-        if terminal is not None and terminal["state"] in {"sold", "expired"}:
+        if terminal is not None and terminal["state"] in {"sold", "expired", "removed"}:
             raise EtsyError(
                 f"Artwork {artwork_id} already ended as {terminal['state']} and will not be relisted.",
                 kind="duplicate",
@@ -236,11 +378,18 @@ def publish_pack(
             resume_state = "prepared"
 
     try:
-        if resume_state in {"", "prepared"} or not listing_id:
+        if resume_state == "draft_created" and not listing_id:
+            raise EtsyError(
+                "A draft was started but no listing id was stored. "
+                "Refusing to create a second draft for the same artwork.",
+                kind="api",
+            )
+        if resume_state in {"", "prepared"}:
             draft = graph.create_draft_listing(fields)
             listing_id = str(draft.get("listing_id") or draft.get("id") or "")
             if not listing_id:
                 raise EtsyError("Etsy did not return a listing id.", kind="api")
+            # Persist the id immediately so a timeout cannot spawn a duplicate draft.
             with connect(db) as connection:
                 update_listing(
                     connection,
@@ -252,6 +401,8 @@ def publish_pack(
             resume_state = "draft_created"
 
         if resume_state == "draft_created":
+            if not listing_id:
+                raise EtsyError("Draft listing id is missing.", kind="api")
             gallery = ensure_gallery_details(folder, rng=rng)
             _sync_listing_gallery(graph, listing_id, gallery)
             existing_files = results_list(graph.get_listing_files(listing_id), "results")
@@ -276,6 +427,10 @@ def publish_pack(
             from datetime import datetime, timezone
 
             activated = datetime.now(timezone.utc).isoformat()
+            remote = graph.get_listing(listing_id)
+            _assert_listing_live(remote, listing_id=listing_id)
+            gallery = ensure_gallery_details(folder, rng=rng)
+            _assert_assets_attached(graph, listing_id, expected_images=len(gallery))
             with connect(db) as connection:
                 update_listing(
                     connection,
@@ -354,16 +509,27 @@ def published_listing(artwork_id: str, *, database: Path | None = None) -> dict[
     }
 
 
-def _sync_listing_gallery(client: EtsyClient, listing_id: str, gallery: list[Path]) -> None:
-    """Attach exactly the gallery images, replacing duplicates from a partial resume."""
+def _sync_listing_gallery(
+    client: EtsyClient,
+    listing_id: str,
+    gallery: list[Path],
+    *,
+    replace: bool = False,
+) -> None:
+    """
+    Attach exactly the gallery images.
+
+    Etsy refuses to delete the final image, so new photos are uploaded first,
+    then the previous set is removed. When replace is false and the count
+    already matches (resume after a partial upload), nothing is changed.
+    """
     existing = results_list(client.get_listing_images(listing_id), "results")
-    if len(existing) == len(gallery):
+    if not replace and len(existing) == len(gallery):
         return
     old_ids = [
         image.get("listing_image_id") or image.get("image_id")
         for image in existing
     ]
-    # Etsy refuses to delete the final image, so upload the intended set first.
     for rank, path in enumerate(gallery, start=1):
         client.upload_listing_image(listing_id, path, rank=rank)
     for image_id in old_ids:
@@ -385,11 +551,26 @@ def _assert_assets_attached(
     if expected_images is not None and len(images) != expected_images:
         raise EtsyError(
             f"Etsy listing has {len(images)} images; expected {expected_images} "
-            "(full artwork plus detail crops).",
+            "(web preview plus detail crops).",
             kind="api",
         )
     if not files:
         raise EtsyError("Etsy listing has no downloadable print file attached.", kind="api")
+
+
+def _assert_listing_live(remote: dict[str, object], *, listing_id: str) -> None:
+    state = str(remote.get("state") or "")
+    quantity = remote.get("quantity")
+    if state != "active":
+        raise EtsyError(
+            f"Etsy listing {listing_id} is {state!r} after publish; expected active.",
+            kind="api",
+        )
+    if quantity is not None and int(quantity) != 1:
+        raise EtsyError(
+            f"Etsy listing {listing_id} quantity is {quantity}; expected 1.",
+            kind="api",
+        )
 
 
 def _mark_pack_etsy(

@@ -7,7 +7,7 @@ Status: implemented (mocked writes only; live listings wait for `set-state ready
 When seller state is `ready`, each new daily pack is listed automatically:
 
 - Quantity 1, type `download`, `should_auto_renew=false`
-- Price `229 + 20R + 10S` SEK (shop currency must be SEK)
+- Price `230 + 20R + 10S` SEK Swedish inclusive target (shop currency must be SEK)
 - Preview via `uploadListingImage`; print master via `uploadListingFile`
 - AI disclosure + digital-download + single-sale wording
 - Poem text included only when commercial reproduction is cleared

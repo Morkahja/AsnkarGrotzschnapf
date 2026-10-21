@@ -27,6 +27,7 @@ class ScheduleUnitTests(unittest.TestCase):
         timer = (unit_source_dir() / "anskar-daily.timer").read_text(encoding="utf-8")
         self.assertIn("12:00:00", timer)
         self.assertIn("Persistent=false", timer)
+        self.assertIn("RandomizedDelaySec=0", timer)
         self.assertNotIn("06:30", timer)
         self.assertNotIn("Persistent=true", timer)
 
@@ -35,6 +36,7 @@ class ScheduleUnitTests(unittest.TestCase):
         self.assertIn("WakeSystem=true", timer)
         self.assertIn("12:00:00", timer)
         self.assertIn("Persistent=false", timer)
+        self.assertIn("RandomizedDelaySec=0", timer)
 
     def test_services_inhibit_sleep_during_production(self):
         user = (unit_source_dir() / "anskar-daily.service").read_text(encoding="utf-8")

@@ -55,22 +55,29 @@ def connect_etsy(
     )
     cert, key = ensure_localhost_tls(etsy_tls_dir())
     opener = browser_opener or webbrowser.open
-    if open_browser:
-        opener(auth.authorize_url)
-    # Guidance only — never includes tokens, codes, or the PKCE verifier.
-    print("Open this URL if the browser did not open:")
-    print(auth.authorize_url)
-    print(f"Waiting for Etsy callback at {auth.redirect_uri} …")
-    print(
-        f"Approve access for Anskar Gortzschnapf Publisher on the {EXPECTED_SHOP_NAME} shop "
-        f"(id {EXPECTED_SHOP_ID})."
-    )
-    print("If the browser warns about the local HTTPS certificate, accept it for localhost only.")
+
+    def _after_listener_ready() -> None:
+        # Guidance only — never includes tokens, codes, or the PKCE verifier.
+        print("Open this URL if the browser did not open:")
+        print(auth.authorize_url)
+        print(f"Waiting for Etsy callback at {auth.redirect_uri} …")
+        print(
+            f"Approve access for Anskar Gortzschnapf Publisher on the {EXPECTED_SHOP_NAME} shop "
+            f"(id {EXPECTED_SHOP_ID})."
+        )
+        print(
+            "If the browser warns about the local HTTPS certificate, accept it for localhost only."
+        )
+        if open_browser:
+            opener(auth.authorize_url)
+
+    # Listener must be bound before the browser opens so the callback cannot race.
     code = wait_for_authorization_code(
         redirect_uri=auth.redirect_uri,
         expected_state=auth.state,
         cert_file=cert,
         key_file=key,
+        on_listening=_after_listener_ready,
     )
     tokens = exchange_authorization_code(
         client_id=api_key,
@@ -271,8 +278,6 @@ def _resolve_shop(
         if preferred is None:
             if len(shops) == 1 and isinstance(shops[0], dict) and confirm_shop:
                 preferred = shops[0]
-            elif existing_shop_id:
-                return existing_shop_id, EXPECTED_SHOP_NAME
             else:
                 names = [
                     str(item.get("shop_name") or item.get("shop_id"))
@@ -287,7 +292,15 @@ def _resolve_shop(
         return str(preferred.get("shop_id")), str(preferred.get("shop_name") or "")
     if existing_shop_id:
         shop = client.get_shop(existing_shop_id)
-        return str(shop.get("shop_id") or existing_shop_id), str(shop.get("shop_name") or "")
+        shop_id = str(shop.get("shop_id") or "")
+        shop_name = str(shop.get("shop_name") or "")
+        if not shop_id_matches(shop_id) and not confirm_shop:
+            raise EtsyError(
+                f"Stored shop id {existing_shop_id} does not match the live shop "
+                f"{shop_name!r} ({shop_id}). Pass --confirm-shop to accept it.",
+                kind="credentials",
+            )
+        return shop_id or str(existing_shop_id), shop_name or EXPECTED_SHOP_NAME
     raise EtsyError(
         "Could not determine the Etsy user id from the access token. Pass --shop-id.",
         kind="credentials",

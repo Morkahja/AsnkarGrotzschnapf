@@ -145,13 +145,13 @@ def require_model(model_id: str, settings: GeneratorSettings | None = None) -> M
 
 
 def model_allows_publication(model_id: str | None, settings: GeneratorSettings | None = None) -> bool:
-    """False when the model's commercial license is still unverified."""
+    """False when missing, unknown, not installed, or commercially unverified."""
     if not model_id:
-        return True
+        return False
     try:
         profile = require_model(model_id, settings)
     except ValueError:
-        return True
+        return False
     return profile.commercial_use != COMMERCIAL_UNVERIFIED
 
 

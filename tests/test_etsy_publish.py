@@ -13,13 +13,34 @@ from unittest.mock import patch
 from anskar.etsy.client import EtsyClient
 from anskar.etsy.credentials import EtsyCredentials
 from anskar.etsy.errors import EtsyError
-from anskar.etsy.listing import listing_fields, poem_text_cleared_for_reproduction
-from anskar.etsy.maintain import maintain_etsy, offerings_status
+from anskar.etsy.listing import (
+    AI_CUSTOMER_DISCLOSURE,
+    POEM_INTRO,
+    listing_fields,
+    load_pack,
+    poem_text_cleared_for_reproduction,
+)
+from anskar.etsy.maintain import (
+    TRANSACTION_PAGE,
+    _collect_transactions,
+    maintain_etsy,
+    offerings_status,
+)
 from anskar.etsy.oauth import DEFAULT_SCOPES, EXPECTED_SHOP_ID, EXPECTED_SHOP_NAME
-from anskar.etsy.gallery import choose_quarters, quarter_crop_box
-from anskar.etsy.pricing import REQUIRED_CURRENCY, VAT_INCLUSIVE_NOTE, calculate_price
-from anskar.etsy.service import publish_pack, published_listing
-from anskar.etsy.state import PENDING_VERIFICATION, READY, set_etsy_state
+from anskar.etsy.gallery import (
+    choose_quarters,
+    ensure_gallery_details,
+    listing_gallery_images,
+    quarter_crop_box,
+)
+from anskar.etsy.pricing import REQUIRED_CURRENCY, calculate_price
+from anskar.etsy.service import (
+    publish_pack,
+    published_listing,
+    refresh_listing_descriptions,
+    refresh_listing_images,
+)
+from anskar.etsy.state import ETSY_LISTING_QUEUED, PENDING_VERIFICATION, READY, set_etsy_state
 from anskar.etsy.store import completed_sales_count, connect, find_by_artwork
 
 
@@ -60,7 +81,7 @@ class FakeEtsy:
     def upload_listing_image(self, listing_id, path, *, rank=None):
         if self.fail_after_draft:
             raise EtsyError("timeout after draft", kind="timeout")
-        assert path.suffix.lower() == ".png"
+        assert path.suffix.lower() in {".png", ".jpg", ".jpeg"}
         image_id = len(self.images[str(listing_id)]) + 1
         self.images[str(listing_id)].append(
             {
@@ -195,7 +216,7 @@ class FakeEtsy:
         }
 
     def get_shop_transactions(self, *, limit=100, offset=0):
-        return {"results": self.transactions}
+        return {"results": self.transactions[offset : offset + limit]}
 
     def get_shop_receipts(self, *, was_paid=True, limit=100, offset=0):
         return {"results": []}
@@ -258,6 +279,11 @@ class EtsyPublishTests(unittest.TestCase):
             "rights": rights,
             "source_text": rights["body"],
             "print_pixels": {"width": 1600, "height": 1600},
+            "intended_print_size": {
+                "width_inches": 8.0,
+                "height_inches": 8.0,
+                "ppi": 200,
+            },
             "orientation": "square",
             "style_preset": "painterly",
             "abstraction": "surreal",
@@ -280,20 +306,84 @@ class EtsyPublishTests(unittest.TestCase):
         manifest = json.loads((self.packs / pack_id / "manifest.json").read_text(encoding="utf-8"))
         self.assertTrue(poem_text_cleared_for_reproduction(manifest))
         fields = listing_fields(manifest, price_sek=249)
+        description = str(fields["description"])
         self.assertEqual(fields["quantity"], 1)
         self.assertFalse(fields["should_auto_renew"])
         self.assertEqual(fields["type"], "download")
-        self.assertIn("digital download", fields["description"].lower())
-        self.assertIn("AI", fields["description"])
-        self.assertIn("Little Lamb", fields["description"])
-        self.assertIn("single-sale", fields["description"].lower())
-        self.assertIn(VAT_INCLUSIVE_NOTE, fields["description"])
-        self.assertIn("including VAT", fields["description"])
+        self.assertIn("digital download", description.lower())
+        self.assertIn(AI_CUSTOMER_DISCLOSURE, description)
+        self.assertEqual(description.count("AI image generation"), 1)
+        self.assertIn("Little Lamb", description)
+        self.assertIn(POEM_INTRO, description)
+        self.assertIn("Intended print size: 8×8 inches at 200 PPI.", description)
+        self.assertIn("single-sale", description.lower())
+        self.assertNotIn("Listed price:", description)
+        self.assertNotIn("including VAT", description)
+        self.assertNotIn("cleared for commercial", description.lower())
+        self.assertNotIn("Artistic interpretation", description)
+        self.assertNotIn("approved print pixels", description.lower())
+        self.assertNotIn("not upscaled", description.lower())
 
     def test_gallery_picks_three_random_quarters(self) -> None:
         self.assertEqual(len(choose_quarters(rng=_FixedShuffle(("br", "tl", "tr", "bl")))), 3)
         self.assertEqual(quarter_crop_box(1600, 1600, "tl"), (800, 800, 0, 0))
         self.assertEqual(quarter_crop_box(1600, 1600, "br"), (800, 800, 800, 800))
+
+    def test_listing_gallery_never_uses_print_master(self) -> None:
+        pack_id = self._pack("gallery-safe")
+        folder = self.packs / pack_id
+        gallery = ensure_gallery_details(folder, rng=_FixedShuffle(("tl", "tr", "bl", "br")))
+        names = [path.name for path in gallery]
+        self.assertIn(names[0], {"preview.jpg", "preview.png"})
+        self.assertNotIn("print.png", names)
+        for path in listing_gallery_images(folder):
+            self.assertNotEqual(path.name, "print.png")
+            self.assertNotEqual(path.resolve(), (folder / "etsy" / "print.png").resolve())
+
+    def test_refresh_listing_images_replaces_print_hero(self) -> None:
+        pack_id = self._pack("refresh-img")
+        result = publish_pack(
+            pack_id,
+            packs=self.packs,
+            database=self.db,
+            credentials=self.creds,
+            client=self.fake,  # type: ignore[arg-type]
+            rng=type("R", (), {"randrange": staticmethod(lambda a, b: 0)})(),
+        )
+        listing_id = str(result["listing_id"])
+        # Simulate an older listing whose gallery was the print master.
+        self.fake.images[listing_id] = [
+            {
+                "listing_image_id": 99,
+                "image_id": 99,
+                "path": str(self.packs / pack_id / "etsy" / "print.png"),
+                "name": "print.png",
+                "rank": 1,
+            }
+        ]
+        dry = refresh_listing_images(
+            packs=self.packs,
+            database=self.db,
+            credentials=self.creds,
+            client=self.fake,  # type: ignore[arg-type]
+            dry_run=True,
+            rng=_FixedShuffle(("tl", "tr", "bl", "br")),
+        )
+        self.assertEqual(dry["count"], 1)
+        self.assertEqual(self.fake.images[listing_id][0]["name"], "print.png")
+        report = refresh_listing_images(
+            packs=self.packs,
+            database=self.db,
+            credentials=self.creds,
+            client=self.fake,  # type: ignore[arg-type]
+            dry_run=False,
+            rng=_FixedShuffle(("tl", "tr", "bl", "br")),
+        )
+        self.assertEqual(report["count"], 1)
+        self.assertFalse(report.get("errors"))
+        names = [image["name"] for image in self.fake.images[listing_id]]
+        self.assertIn(names[0], {"preview.jpg", "preview.png"})
+        self.assertNotIn("print.png", names)
 
     def test_end_to_end_simulated_listing(self) -> None:
         pack_id = self._pack("sim-1")
@@ -315,9 +405,12 @@ class EtsyPublishTests(unittest.TestCase):
         listing_id = str(result["listing_id"])
         self.assertEqual(self.fake.listings[listing_id]["state"], "active")
         self.assertEqual(self.fake.listings[listing_id]["price"], float((230 + 40) * 4 // 5))
-        # Hero print plus three detail crops when ImageMagick can write them.
+        # Web preview (never print.png) plus detail crops; print is download-only.
         self.assertGreaterEqual(len(self.fake.images[listing_id]), 1)
-        self.assertEqual(self.fake.images[listing_id][0]["name"], "print.png")
+        self.assertIn(self.fake.images[listing_id][0]["name"], {"preview.jpg", "preview.png"})
+        self.assertNotEqual(self.fake.images[listing_id][0]["name"], "print.png")
+        for image in self.fake.images[listing_id]:
+            self.assertNotEqual(image["name"], "print.png")
         self.assertEqual(len(self.fake.files[listing_id]), 1)
         self.assertEqual(self.fake.files[listing_id][0]["filename"], "print.png")
         stored = published_listing("sim-1", database=self.db)
@@ -487,7 +580,7 @@ class EtsyPublishTests(unittest.TestCase):
                 client=self.fake,  # type: ignore[arg-type]
             )
 
-    def test_sold_not_expired(self) -> None:
+    def test_sold_out_without_transaction_is_removed_not_sold(self) -> None:
         pack_id = self._pack("sold-keep")
         activated = datetime(2026, 1, 1, tzinfo=timezone.utc)
         result = publish_pack(
@@ -501,9 +594,10 @@ class EtsyPublishTests(unittest.TestCase):
         listing_id = str(result["listing_id"])
         with connect(self.db) as connection:
             row = find_by_artwork(connection, "sold-keep", states=("active",))
-            from anskar.etsy.store import update_listing
+            from anskar.etsy.store import completed_sales_count, update_listing
 
             update_listing(connection, int(row["id"]), activated_at=activated.isoformat())
+            before = completed_sales_count(connection)
         self.fake.listings[listing_id]["quantity"] = 0
         self.fake.listings[listing_id]["state"] = "sold_out"
         report = maintain_etsy(
@@ -512,9 +606,13 @@ class EtsyPublishTests(unittest.TestCase):
             now=activated + timedelta(days=50),
         )
         self.assertEqual(report["expired"], 0)
+        self.assertEqual(report["removed"], 1)
         with connect(self.db) as connection:
-            row = find_by_artwork(connection, "sold-keep")
-            self.assertEqual(row["state"], "sold")
+            from anskar.etsy.store import completed_sales_count
+
+            row = find_by_artwork(connection, "sold-keep", states=("removed",))
+            self.assertEqual(row["state"], "removed")
+            self.assertEqual(completed_sales_count(connection), before)
         self.assertNotIn(listing_id, self.fake.deleted)
 
     def test_offline_delay_reported(self) -> None:
@@ -564,6 +662,84 @@ class EtsyPublishTests(unittest.TestCase):
         self.assertEqual(report["completed_sales_count"], 0)
         self.assertEqual(len(report["offerings"]), 1)
         self.assertEqual(report["offerings"][0]["price_r"], 3)
+
+    def test_load_pack_rejects_dotdot(self) -> None:
+        with self.assertRaises(EtsyError) as caught:
+            load_pack("..", packs=self.packs)
+        self.assertEqual(caught.exception.kind, "media")
+        with self.assertRaises(EtsyError):
+            load_pack(".", packs=self.packs)
+
+    def test_refresh_listing_descriptions_rewrites_active(self) -> None:
+        from anskar.etsy.store import connect, insert_listing, update_listing
+
+        pack_id = self._pack("refresh-desc")
+        with connect(self.db) as connection:
+            attempt = insert_listing(
+                connection,
+                pack_id=pack_id,
+                artwork_id=pack_id,
+                state="active",
+                original_price_sek=250,
+                current_price_sek=250,
+                currency="SEK",
+            )
+            update_listing(connection, attempt, listing_id="9001", listing_url="https://etsy.com/listing/9001")
+        self.fake.listings["9001"] = {
+            "listing_id": 9001,
+            "state": "active",
+            "quantity": 1,
+            "title": "old",
+            "description": "old VAT including VAT cleared for commercial",
+        }
+        report = refresh_listing_descriptions(
+            packs=self.packs,
+            database=self.db,
+            credentials=self.creds,
+            client=self.fake,  # type: ignore[arg-type]
+        )
+        self.assertEqual(report["count"], 1)
+        self.assertEqual(report["errors"], [])
+        description = str(self.fake.listings["9001"]["description"])
+        self.assertIn(POEM_INTRO, description)
+        self.assertIn(AI_CUSTOMER_DISCLOSURE, description)
+        self.assertNotIn("including VAT", description)
+        self.assertEqual(
+            (self.packs / pack_id / "etsy" / "listing.txt").read_text(encoding="utf-8").strip(),
+            description.strip(),
+        )
+
+    def test_maintain_retries_only_queued_with_error(self) -> None:
+        retry_id = self._pack("retry-me")
+        backlog_id = self._pack("backlog-only")
+        (self.packs / retry_id / "etsy" / "queue.json").write_text(
+            json.dumps({"status": ETSY_LISTING_QUEUED, "error": "prior timeout"}),
+            encoding="utf-8",
+        )
+        (self.packs / backlog_id / "etsy" / "queue.json").write_text(
+            json.dumps({"status": ETSY_LISTING_QUEUED, "error": None}),
+            encoding="utf-8",
+        )
+        published: list[str] = []
+
+        def fake_publish(pack_id, **_kwargs):
+            published.append(pack_id)
+            return {"listing_id": "1", "pack_id": pack_id}
+
+        with patch("anskar.etsy.service.publish_pack", side_effect=fake_publish):
+            report = maintain_etsy(database=self.db, packs=self.packs, client=self.fake)  # type: ignore[arg-type]
+        self.assertEqual(published, [retry_id])
+        self.assertEqual(report["retries_published"], 1)
+
+    def test_transaction_collection_paginates(self) -> None:
+        page = TRANSACTION_PAGE
+        self.fake.transactions = [
+            {"transaction_id": i, "listing_id": 1, "was_paid": True} for i in range(page + 3)
+        ]
+        collected = _collect_transactions(self.fake)  # type: ignore[arg-type]
+        self.assertEqual(len(collected), page + 3)
+        self.assertEqual(collected[0]["transaction_id"], 0)
+        self.assertEqual(collected[-1]["transaction_id"], page + 2)
 
 
 class _FixedShuffle:

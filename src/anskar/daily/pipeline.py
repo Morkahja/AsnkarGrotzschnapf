@@ -118,6 +118,7 @@ def resume_run(
             prepare_pack=prepare_pack,
             publish_instagram=publish_instagram,
             publish_etsy=publish_etsy,
+            queue_etsy_only=False,  # stored flag on the run wins below
         )
 
 
@@ -177,10 +178,11 @@ def _run_or_resume(
                 connection,
                 dry_run=bool(dry_run),
                 run_kind="test" if allow_test else "daily",
+                queue_etsy_only=queue_etsy_only,
             )
             row = get_run(connection, active_id)
             assert row is not None
-            is_dry = bool(dry_run)
+            is_dry = bool(row["dry_run"]) if dry_run is None else bool(dry_run)
         else:
             row = get_run(connection, run_id)
             if row is None:
@@ -203,6 +205,11 @@ def _run_or_resume(
             assert row is not None
             active_id = run_id
             is_dry = bool(row["dry_run"]) if dry_run is None else bool(dry_run)
+
+    # Prefer the persisted rehearsal/queue flag over the caller default on resume.
+    keys = row.keys()
+    if "queue_etsy_only" in keys and row["queue_etsy_only"] is not None:
+        queue_etsy_only = bool(row["queue_etsy_only"]) or queue_etsy_only
 
     try:
         status = str(row["status"])
@@ -307,14 +314,38 @@ def _run_or_resume(
         kind = str(getattr(exc, "kind", "error"))
         with connect(daily) as connection:
             current = get_run(connection, active_id)
-            # Permanent selection/media failures must not leave an active run that
-            # blocks the next scheduled day. Instagram/API failures stay resumable.
-            permanent = kind in {"media", "empty", "duplicate"}
+            # Soft Instagram media failures: count up to 3, keep poem eligible, stay resumable
+            # until the third permanent media error, then fail the run without skipping the poem.
             if (
+                kind == "media"
+                and isinstance(exc, InstagramError)
+                and current is not None
+                and current["status"] == "pack_prepared"
+            ):
+                fails = int(current["media_fail_count"] or 0) + 1 if "media_fail_count" in current.keys() else 1
+                if fails < 3:
+                    update_run(
+                        connection,
+                        active_id,
+                        media_fail_count=fails,
+                        error_kind=kind,
+                        error_message=str(exc),
+                    )
+                else:
+                    update_run(
+                        connection,
+                        active_id,
+                        status="failed",
+                        media_fail_count=fails,
+                        error_kind=kind,
+                        error_message=str(exc),
+                    )
+            elif (
                 current is not None
                 and current["status"] in {"pack_prepared", "instagram_published"}
-                and not permanent
+                and kind not in {"empty", "duplicate"}
             ):
+                # Transient API/timeout: keep status so noon can auto-resume.
                 update_run(
                     connection,
                     active_id,
@@ -368,6 +399,7 @@ def _complete_after_instagram(
     )
 
     with connect(daily) as connection:
+        # Clear run-level transient errors only. Pack etsy_last_error stays for maintain retry.
         update_run(
             connection,
             run_id,
@@ -601,8 +633,11 @@ def _step_generate(
     }
     try:
         record = runner(archive, settings, **kwargs)
-    except TypeError:
-        # Test doubles may not accept the new kwargs.
+    except TypeError as exc:
+        # Only fall back when the callable rejects unexpected keyword arguments.
+        message = str(exc)
+        if "unexpected keyword" not in message and "got an unexpected" not in message:
+            raise
         record = runner(
             archive,
             settings,
@@ -746,6 +781,11 @@ def _reusable_pack(
         if not isinstance(manifest, dict):
             continue
         if not manifest.get("publication_ready"):
+            continue
+        # Do not reattach a pack already published unless finishing that same run.
+        if manifest.get("instagram_published") or manifest.get("etsy_published") or manifest.get(
+            "published"
+        ):
             continue
         rights = manifest.get("rights") if isinstance(manifest.get("rights"), dict) else {}
         pack_poem = rights.get("poem_id")
@@ -972,26 +1012,30 @@ def _write_etsy_queue_marker(
     if not folder.is_dir():
         return
     manifest_path = folder / "manifest.json"
-    payload: dict
+    payload: dict | None = None
     if manifest_path.is_file():
         try:
             loaded = json.loads(manifest_path.read_text(encoding="utf-8"))
-            payload = loaded if isinstance(loaded, dict) else {}
+            if isinstance(loaded, dict):
+                payload = loaded
         except (OSError, json.JSONDecodeError):
-            payload = {}
-    else:
-        payload = {}
-    payload["etsy_status"] = status
-    payload["etsy_integration_state"] = load_etsy_state()
-    if listing_id:
-        payload["etsy_listing_id"] = listing_id
-    if listing_url:
-        payload["etsy_listing_url"] = listing_url
-    if error:
-        payload["etsy_last_error"] = error
-    if status == ETSY_LISTING_PENDING:
-        payload["etsy_published"] = False
-    manifest_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            payload = None
+    if payload is not None:
+        payload["etsy_status"] = status
+        payload["etsy_integration_state"] = load_etsy_state()
+        if listing_id:
+            payload["etsy_listing_id"] = listing_id
+        if listing_url:
+            payload["etsy_listing_url"] = listing_url
+        if error:
+            payload["etsy_last_error"] = error
+        if status == ETSY_LISTING_PENDING:
+            payload["etsy_published"] = False
+        manifest_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    # Always write queue.json; never overwrite a corrupt/non-dict manifest with {}.
     queue = folder / "etsy" / "queue.json"
     queue.parent.mkdir(parents=True, exist_ok=True)
     queue.write_text(

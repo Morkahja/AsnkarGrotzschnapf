@@ -1,8 +1,16 @@
 # Anskar Grotzschnapf
 
-Local poetry archive and artwork generator. The archive stores poems, selects one pending poem, and can turn that poem into a local image. A print pack can be prepared locally. Nothing is published from this repository.
+Local poetry archive and daily artist. Once a day this machine can:
 
-Permanent instructions for the development agent are in [AGENTS.md](AGENTS.md).
+1. Choose one cleared poem from the archive  
+2. Generate a 1600×1600 artwork locally (`sd-cli`)  
+3. Prepare a print pack  
+4. Publish to Instagram (`@anskargrotzschnapf`)  
+5. List a quantity-1 SEK digital download on Etsy when the shop is `ready`
+
+**Version 1.0** is that automated loop with the noon wake timer and Etsy maintenance armed. Manual Instagram and Etsy `publish` commands still require `--confirm`.
+
+Permanent agent instructions: [AGENTS.md](AGENTS.md). Short history: [CHANGELOG.md](CHANGELOG.md). Design/task records: [`docs/tasks/`](docs/tasks/).
 
 ## Setup
 
@@ -13,6 +21,31 @@ python3 -m venv --without-pip .venv
 ```
 
 The virtual environment at `.venv` was created with that command.
+
+## Daily automation (hands-off)
+
+Prefer **one** noon publisher:
+
+- **PC may sleep overnight:** system timer with `WakeSystem=true` (staged by `schedule prepare-system`, enabled with sudo). Keep the **user** noon timer disabled.
+- **PC stays awake:** user timer via `schedule install --enable`.
+
+Also enable the Etsy maintain user timer (sales, day-30 discount, day-42 removal).
+
+```bash
+PYTHONPATH=src .venv/bin/python -m anskar schedule status
+PYTHONPATH=src .venv/bin/python -m anskar schedule install --enable
+PYTHONPATH=src .venv/bin/python -m anskar schedule prepare-system
+```
+
+After `prepare-system`, activate the system wake timer (and disable the user noon timer) with the commands that command prints. Do not leave both noon timers enabled.
+
+```bash
+PYTHONPATH=src .venv/bin/python -m anskar daily-status
+PYTHONPATH=src .venv/bin/python -m anskar daily-run          # one-off live run
+PYTHONPATH=src .venv/bin/python -m anskar daily-resume <id>  # finish an incomplete run
+```
+
+`daily-run` auto-resumes an incomplete live run. At most one live Instagram artwork per Swedish calendar day (`Europe/Stockholm`). Desktop notifications fire on major stages; set `ANSKAR_NOTIFY=0` to silence them.
 
 ## Commands
 
@@ -49,7 +82,7 @@ The generator is the installed `sd-cli`. Paths and sampler settings can be overr
 
 Open the local prompt lab in a browser. It generates from text you type and saves each result under `data/experiments/`. Direct generation sends that text through the house style. Interpret with Ollama asks the local `qwen3:8b` model for a visual prompt, which stays editable, and then sends that prompt by itself. Abstraction can be Gentle, Surreal Abstract, or Experimental. The model list includes Z-Image Turbo, Z-Image, RealVisXL V5, and DreamShaper XL when those files are installed. DreamShaper XL is for experiments and local previews until its commercial license is documented. House style defaults to Dreamlike; Painterly and Symbolic stay available under Advanced. It does not change the poetry archive. Ollama is expected at `127.0.0.1:11434`.
 
-Prepare a local print pack from one saved image. The pack copies that file as the print master. It does not upscale or generate a second image. It classifies 4, 6, 8, 10, and 12 inch sizes from the real pixel count, writes a digital-download listing, and makes a smaller Instagram preview when the long edge is above 1080. Nothing is published. A size below 150 PPI is marked unsuitable.
+Prepare a local print pack from one saved image. The pack copies that file as the print master. It does not upscale or generate a second image. It classifies 4, 6, 8, 10, and 12 inch sizes from the real pixel count, writes a digital-download listing, and makes a smaller Instagram preview when the long edge is above 1080. Preparing a pack does not publish. A size below 150 PPI is marked unsuitable.
 
 ```bash
 PYTHONPATH=src .venv/bin/python -m anskar print data/experiments/<experiment>/<file>.json
@@ -59,16 +92,23 @@ PYTHONPATH=src .venv/bin/python -m anskar print data/experiments/<experiment>/<f
 PYTHONPATH=src .venv/bin/python -m anskar lab
 ```
 
-Instagram uses the official Instagram API with Instagram Login. The token stays in `~/.config/anskar/instagram.json`, which is outside this repository. Put the token in a file by itself and install it from that file. The token is not printed.
+The lab page is `http://127.0.0.1:8765/`. Use another port with `--port`.
+
+### Instagram
+
+Instagram uses the official Instagram API with Instagram Login. The token stays in `~/.config/anskar/instagram.json`, outside this repository. Put the token in a file by itself and install it from that file. The token is not printed.
 
 ```bash
 PYTHONPATH=src .venv/bin/python -m anskar instagram install-token --from /path/to/token-file
 PYTHONPATH=src .venv/bin/python -m anskar instagram status
 PYTHONPATH=src .venv/bin/python -m anskar instagram prepare <pack-id>
 PYTHONPATH=src .venv/bin/python -m anskar instagram publish <pack-id> --dry-run
+PYTHONPATH=src .venv/bin/python -m anskar instagram publish <pack-id> --confirm
 ```
 
-`status` only reads the account. `prepare` writes a local JPEG and caption under `data/instagram/`. `publish --dry-run` does not create a post. A real post is a separate `publish <pack-id> --confirm` and is not part of the default workflow. A public https image URL, preferably the approved Etsy image, has to be entered in `~/.config/anskar/instagram-hosts.json` before a post can be sent. When fewer than seven days remain on the token, `instagram renew` refreshes it through Meta's `ig_refresh_token` grant.
+`status` only reads the account. A public https image URL (often via R2) must be configured before a live post. When fewer than seven days remain on the token, `instagram renew` refreshes it through Meta's `ig_refresh_token` grant. Meta “API access blocked” is a developer-dashboard restriction, not a missing local file.
+
+### Etsy
 
 Etsy Open API credentials stay in `~/.config/anskar/etsy.json`. Register the exact callback `https://localhost:8743/etsy/callback` on the Etsy app, store the keystring and shared secret, then authorize once:
 
@@ -77,15 +117,16 @@ PYTHONPATH=src .venv/bin/python -m anskar etsy setup
 PYTHONPATH=src .venv/bin/python -m anskar etsy connect
 PYTHONPATH=src .venv/bin/python -m anskar etsy status
 PYTHONPATH=src .venv/bin/python -m anskar etsy test
+PYTHONPATH=src .venv/bin/python -m anskar etsy set-state ready
+PYTHONPATH=src .venv/bin/python -m anskar etsy maintain
+PYTHONPATH=src .venv/bin/python -m anskar etsy refresh-descriptions
 ```
 
-OAuth alone does not enable publishing. Seller verification stays separate (`etsy set-state ready`). When ready, each new daily pack is listed automatically as a quantity-1 SEK digital download; `etsy maintain` handles sales, the day-30 discount, and day-42 removal. Tokens refresh automatically. Secrets are never printed.
-
-The page is `http://127.0.0.1:8765/`. Use another port with `--port`.
+OAuth alone does not enable publishing — seller verification is separate (`etsy set-state ready`). Buyer listing copy is short: digital download note, intended print size, the source poem, and one local-AI disclosure. Gallery photos are preview-based; the paid file is the print PNG. Tokens refresh automatically. Secrets are never printed.
 
 ## One-time wake rehearsal
 
-This suspends the computer. It does not change the noon timer. `--publish` also creates one real Instagram post. Etsy is only queued.
+This suspends the computer. It does not change the noon timer. `--publish` creates one real Instagram post; Etsy is queued only.
 
 ```bash
 PYTHONPATH=src .venv/bin/python -m anskar schedule test-cycle
@@ -93,6 +134,8 @@ PYTHONPATH=src .venv/bin/python -m anskar schedule test-cycle --publish
 ```
 
 The result is kept in `data/test-cycle/latest.json`. Cancel before the wake with `anskar schedule test-cycle --cancel`.
+
+After pulling timer unit changes, refresh installed units (`schedule install` / `prepare-system` + sudo copy for the system timer).
 
 ## Tests
 

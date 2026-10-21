@@ -136,7 +136,12 @@ def approve_artwork(
         raise PrintError("Experiment metadata is unreadable.")
     image = metadata_path.with_suffix(".png")
     if not image.is_file():
-        image = Path(str(record.get("output_path") or ""))
+        fallback = Path(str(record.get("output_path") or ""))
+        if fallback.is_file():
+            resolved = fallback.resolve()
+            if not any(resolved == root or root in resolved.parents for root in roots):
+                raise PrintError("The approved image is outside the allowed experiment roots.")
+            image = resolved
     if not image.is_file():
         raise PrintError("The approved image is missing.")
     try:
@@ -148,18 +153,27 @@ def approve_artwork(
     if destination.exists():
         manifest_path = destination / "manifest.json"
         existing: dict | None = None
+        unreadable = False
         if manifest_path.is_file():
             try:
                 loaded = json.loads(manifest_path.read_text(encoding="utf-8"))
                 existing = loaded if isinstance(loaded, dict) else None
+                if existing is None:
+                    unreadable = True
             except (OSError, json.JSONDecodeError):
                 existing = None
-        # Never overwrite a ready or already-published pack. A failed rights check
-        # may leave a non-ready pack; rebuild it from the same original image.
-        if existing is not None and (
-            existing.get("publication_ready")
-            or existing.get("published")
-            or existing.get("instagram_published")
+                unreadable = True
+        else:
+            unreadable = True
+        # Never wipe a pack with publish markers, a ready pack, or an unreadable manifest.
+        if unreadable or (
+            existing is not None
+            and (
+                existing.get("publication_ready")
+                or existing.get("published")
+                or existing.get("instagram_published")
+                or existing.get("etsy_published")
+            )
         ):
             raise PrintError(f"A print pack already exists: {destination}. Nothing was overwritten.")
         shutil.rmtree(destination)
@@ -219,9 +233,11 @@ def _fill_pack(
     shutil.copy2(print_path, etsy / "print.png")
     if jpeg_path.is_file():
         shutil.copy2(jpeg_path, etsy / "print.jpg")
-    from anskar.etsy.gallery import write_detail_crops
+    from anskar.etsy.gallery import write_detail_crops, write_listing_preview_jpeg
 
-    detail_paths = write_detail_crops(print_path, etsy)
+    # Listing photos use the web preview only. The print PNG is the paid download.
+    listing_jpeg = write_listing_preview_jpeg(etsy / "preview.png", etsy / "preview.jpg")
+    detail_paths = write_detail_crops(etsy / "preview.png", etsy)
     rights = _rights(
         database,
         str(record.get("source_text") or record.get("body") or ""),
@@ -269,6 +285,8 @@ def _fill_pack(
         "etsy_listing": "etsy/listing.txt",
         "etsy_details": [f"etsy/{path.name}" for path in detail_paths],
     }
+    if listing_jpeg is not None and listing_jpeg.is_file():
+        files["etsy_preview_jpeg"] = "etsy/preview.jpg"
     if jpeg_path.is_file():
         files["print_jpeg"] = "print/artwork.jpg"
         files["etsy_print_jpeg"] = "etsy/print.jpg"

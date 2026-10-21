@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS etsy_listings (
     listing_url TEXT,
     state TEXT NOT NULL CHECK (state IN (
         'prepared', 'draft_created', 'assets_uploaded', 'active',
-        'sold', 'expired', 'failed', 'dry_run'
+        'sold', 'expired', 'removed', 'failed', 'dry_run'
     )),
     price_r INTEGER,
     price_s INTEGER,
@@ -46,7 +46,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS one_live_etsy_artwork
 
 CREATE UNIQUE INDEX IF NOT EXISTS one_terminal_etsy_artwork
     ON etsy_listings (artwork_id)
-    WHERE state IN ('sold', 'expired');
+    WHERE state IN ('sold', 'expired', 'removed');
 
 CREATE TABLE IF NOT EXISTS etsy_sales (
     id INTEGER PRIMARY KEY,
@@ -286,7 +286,12 @@ def _migrate(connection: sqlite3.Connection) -> None:
         "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'etsy_listings'"
     ).fetchone()
     sql = (row["sql"] if row else "") or ""
-    needs_rebuild = "'sold'" not in sql or "'active'" not in sql or "'expired'" not in sql
+    needs_rebuild = (
+        "'sold'" not in sql
+        or "'active'" not in sql
+        or "'expired'" not in sql
+        or "'removed'" not in sql
+    )
     if needs_rebuild and row is not None:
         _rebuild_listings_table(connection)
         return
@@ -325,7 +330,7 @@ def _rebuild_listings_table(connection: sqlite3.Connection) -> None:
             listing_url TEXT,
             state TEXT NOT NULL CHECK (state IN (
                 'prepared', 'draft_created', 'assets_uploaded', 'active',
-                'sold', 'expired', 'failed', 'dry_run'
+                'sold', 'expired', 'removed', 'failed', 'dry_run'
             )),
             price_r INTEGER,
             price_s INTEGER,
@@ -349,7 +354,7 @@ def _rebuild_listings_table(connection: sqlite3.Connection) -> None:
             WHERE state IN ('prepared', 'draft_created', 'assets_uploaded', 'active');
         CREATE UNIQUE INDEX IF NOT EXISTS one_terminal_etsy_artwork
             ON etsy_listings (artwork_id)
-            WHERE state IN ('sold', 'expired');
+            WHERE state IN ('sold', 'expired', 'removed');
         """
     )
     legacy_cols = {

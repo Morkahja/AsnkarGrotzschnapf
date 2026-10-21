@@ -5,6 +5,7 @@ from __future__ import annotations
 import getpass
 import json
 import os
+import warnings
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -240,7 +241,7 @@ def setup_etsy_interactive(
     except ValueError as exc:
         raise EtsyError("Taxonomy id must be an integer.", kind="credentials") from exc
     # Allow app-only setup for OAuth connect (placeholder shop/token until connect).
-    # Listing prices use 229 + 20R + 10S SEK — not a stored default.
+    # Listing prices use 230 + 20R + 10S SEK — not a stored default.
     stored = EtsyCredentials(
         api_key=api_key,
         shared_secret=shared,
@@ -381,16 +382,16 @@ def _write_credentials(credentials: EtsyCredentials) -> None:
     file.parent.mkdir(parents=True, exist_ok=True)
     try:
         os.chmod(file.parent, 0o700)
-    except OSError:
-        pass
+    except OSError as exc:
+        warnings.warn(f"Could not chmod Etsy credential directory to 0700: {exc}", stacklevel=2)
     temporary = file.with_suffix(file.suffix + ".tmp")
     temporary.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     try:
         os.chmod(temporary, 0o600)
-    except OSError:
-        pass
+    except OSError as exc:
+        warnings.warn(f"Could not chmod Etsy credential temp file to 0600: {exc}", stacklevel=2)
     temporary.replace(file)
     try:
         os.chmod(file, 0o600)
-    except OSError:
-        pass
+    except OSError as exc:
+        warnings.warn(f"Could not chmod Etsy credential file to 0600: {exc}", stacklevel=2)

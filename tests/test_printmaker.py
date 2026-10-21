@@ -454,6 +454,42 @@ class PackTests(unittest.TestCase):
                     packs=root / "packs",
                 )
 
+    def test_unreadable_manifest_is_not_wiped(self):
+        from anskar.printmaker import artwork_id
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            record = {
+                "experiment": "reuse",
+                "seed": 9,
+                "prompt_sha256": "abcd1234ffff",
+                "model_id": "z-image-turbo",
+            }
+            pack_name = artwork_id(record)
+            packs = root / "packs"
+            pack = packs / pack_name
+            pack.mkdir(parents=True)
+            (pack / "manifest.json").write_text("{not-json", encoding="utf-8")
+            marker = pack / "marker.txt"
+            marker.write_text("keep", encoding="utf-8")
+            folder = root / "experiments" / "reuse"
+            folder.mkdir(parents=True)
+            image = folder / "run.png"
+            _write_png(image, 1600, 1600)
+            metadata = folder / "run.json"
+            metadata.write_text(json.dumps(record), encoding="utf-8")
+            with self.assertRaises(PrintError):
+                approve_artwork(
+                    metadata,
+                    experiments=root / "experiments",
+                    database=root / "missing.sqlite",
+                    settings=_settings(root),
+                    runner=_Runner(),
+                    packs=packs,
+                )
+            self.assertEqual((pack / "manifest.json").read_text(encoding="utf-8"), "{not-json")
+            self.assertEqual(marker.read_text(encoding="utf-8"), "keep")
+
 
 class NegativeTests(unittest.TestCase):
     def test_photorealism_negatives_skip_turbo(self):
@@ -466,6 +502,13 @@ class NegativeTests(unittest.TestCase):
         self.assertTrue(guided.negative_enabled)
         self.assertEqual(guided.negative_prompt, GUIDED_NEGATIVE_PROMPT)
         self.assertIn("photorealistic", guided.negative_prompt)
+
+    def test_missing_model_is_not_publication_ready(self):
+        from anskar.models import model_allows_publication
+
+        self.assertFalse(model_allows_publication(None))
+        self.assertFalse(model_allows_publication(""))
+        self.assertFalse(model_allows_publication("not-a-real-model-id"))
 
     def test_dreamshaper_commercial_use_blocks_publication(self):
         from anskar.models import DREAMSHAPER_PATH, DREAMSHAPER_SHA256, _dreamshaper

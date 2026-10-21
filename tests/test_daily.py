@@ -243,7 +243,7 @@ class DailyPipelineTests(unittest.TestCase):
             encoding="utf-8",
         )
         (source / "anskar-daily.timer").write_text(
-            "[Timer]\nOnCalendar=*-*-* 12:00:00\nPersistent=false\n",
+            "[Timer]\nOnCalendar=*-*-* 12:00:00\nPersistent=false\nRandomizedDelaySec=0\n",
             encoding="utf-8",
         )
         unit_dir = self.root / "user-units"
@@ -871,6 +871,239 @@ class DailyPipelineTests(unittest.TestCase):
                 lock=self.lock,
             )
         self.assertEqual(caught.exception.kind, "busy")
+
+    def test_daily_run_auto_resumes_incomplete_pack_prepared(self):
+        from anskar.daily.ledger import begin_run, connect as daily_connect, update_run
+
+        with daily_connect(self.daily_db) as connection:
+            run_id = begin_run(connection, dry_run=False)
+            update_run(
+                connection,
+                run_id,
+                status="pack_prepared",
+                poem_id=1,
+                pack_id="auto-resume-pack",
+                title="THE LAMB",
+                author="William Blake",
+            )
+        (self.packs / "auto-resume-pack").mkdir()
+        (self.packs / "auto-resume-pack" / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "artwork_id": "auto-resume-pack",
+                    "publication_ready": True,
+                    "digital_download": True,
+                    "rights_cleared": True,
+                    "rights": {
+                        "matched": True,
+                        "publication_ready": True,
+                        "commercial_use_sweden": "yes",
+                        "title": "THE LAMB",
+                        "author": "William Blake",
+                        "poem_id": 1,
+                        "body": POEM_BODY,
+                    },
+                    "source_text": POEM_BODY,
+                    "print_pixels": {"width": 1600, "height": 1600},
+                    "orientation": "square",
+                    "style_preset": "painterly",
+                    "abstraction": "surreal",
+                }
+            ),
+            encoding="utf-8",
+        )
+        for name in ("print.png", "preview.png"):
+            (self.packs / "auto-resume-pack" / "etsy").mkdir(exist_ok=True)
+            (self.packs / "auto-resume-pack" / "etsy" / name).write_bytes(
+                b"\x89PNG\r\n\x1a\n" + b"0" * 32
+            )
+        with patch("anskar.daily.pipeline.etsy_is_ready", return_value=False):
+            result = daily_run(
+                archive_db=self.archive,
+                daily_db=self.daily_db,
+                packs=self.packs,
+                artworks=self.artworks,
+                generate=lambda *a, **k: (_ for _ in ()).throw(AssertionError("no gen")),
+                prepare_pack=lambda *a, **k: (_ for _ in ()).throw(AssertionError("no pack")),
+                publish_instagram=lambda pack_id, **k: {
+                    "published": True,
+                    "media_id": "ig-auto",
+                    "permalink": "https://www.instagram.com/p/auto/",
+                    "pack_id": pack_id,
+                },
+                lock=self.lock,
+            )
+        self.assertEqual(result["id"], run_id)
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["instagram_status"], "published")
+
+    def test_resume_preserves_queue_etsy_only(self):
+        from anskar.daily.ledger import begin_run, connect as daily_connect, update_run
+        from anskar.daily.pipeline import _write_etsy_queue_marker
+
+        with daily_connect(self.daily_db) as connection:
+            run_id = begin_run(connection, dry_run=False, queue_etsy_only=True)
+            update_run(
+                connection,
+                run_id,
+                status="pack_prepared",
+                poem_id=1,
+                pack_id="queue-only-pack",
+                queue_etsy_only=True,
+            )
+        folder = self.packs / "queue-only-pack"
+        folder.mkdir()
+        (folder / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "artwork_id": "queue-only-pack",
+                    "publication_ready": True,
+                    "digital_download": True,
+                    "rights_cleared": True,
+                    "rights": {
+                        "matched": True,
+                        "publication_ready": True,
+                        "commercial_use_sweden": "yes",
+                        "title": "THE LAMB",
+                        "author": "William Blake",
+                        "poem_id": 1,
+                        "body": POEM_BODY,
+                    },
+                    "source_text": POEM_BODY,
+                    "print_pixels": {"width": 1600, "height": 1600},
+                    "orientation": "square",
+                }
+            ),
+            encoding="utf-8",
+        )
+        for name in ("print.png", "preview.png"):
+            (folder / "etsy").mkdir(exist_ok=True)
+            (folder / "etsy" / name).write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 32)
+        etsy_calls: list[str] = []
+
+        def publish_etsy(*_a, **_k):
+            etsy_calls.append("live")
+            return {"listing_id": "nope"}
+
+        with patch("anskar.daily.pipeline.etsy_is_ready", return_value=True):
+            with patch("anskar.daily.pipeline.load_etsy_state", return_value=READY):
+                result = resume_run(
+                    run_id,
+                    archive_db=self.archive,
+                    daily_db=self.daily_db,
+                    packs=self.packs,
+                    artworks=self.artworks,
+                    publish_instagram=lambda pack_id, **k: {
+                        "published": True,
+                        "media_id": "ig-q",
+                        "permalink": "https://www.instagram.com/p/q/",
+                        "pack_id": pack_id,
+                    },
+                    publish_etsy=publish_etsy,
+                    lock=self.lock,
+                )
+        self.assertEqual(result["status"], "completed")
+        self.assertTrue(result.get("queue_etsy_only"))
+        self.assertEqual(etsy_calls, [])
+        self.assertEqual(result["etsy_status"], "pending_shop_activation")
+
+        # Corrupt manifest must not be overwritten with {}.
+        bad = self.packs / "corrupt-pack"
+        bad.mkdir()
+        (bad / "manifest.json").write_text("{broken", encoding="utf-8")
+        with patch("anskar.daily.pipeline.load_etsy_state", return_value=PENDING_VERIFICATION):
+            _write_etsy_queue_marker(bad, status="queued_for_publish", error="x")
+        self.assertEqual((bad / "manifest.json").read_text(encoding="utf-8"), "{broken")
+        self.assertTrue((bad / "etsy" / "queue.json").is_file())
+
+    def test_day_blocked_when_instagram_published_even_if_not_completed(self):
+        from anskar.daily.ledger import begin_run, connect as daily_connect, update_run
+
+        with daily_connect(self.daily_db) as connection:
+            run_id = begin_run(connection, dry_run=False)
+            update_run(
+                connection,
+                run_id,
+                status="instagram_published",
+                instagram_status="published",
+                instagram_media_id="ig-partial",
+                poem_id=1,
+                pack_id="partial-day",
+            )
+        # Finishing bookkeeping via daily-run should resume, not start a second artwork.
+        with patch("anskar.daily.pipeline.etsy_is_ready", return_value=False):
+            finished = daily_run(
+                archive_db=self.archive,
+                daily_db=self.daily_db,
+                packs=self.packs,
+                artworks=self.artworks,
+                generate=lambda *a, **k: (_ for _ in ()).throw(AssertionError("no")),
+                prepare_pack=lambda *a, **k: (_ for _ in ()).throw(AssertionError("no")),
+                publish_instagram=lambda *a, **k: (_ for _ in ()).throw(AssertionError("no ig")),
+                lock=self.lock,
+            )
+        self.assertEqual(finished["id"], run_id)
+        self.assertEqual(finished["status"], "completed")
+        with self.assertRaises(DailyError) as caught:
+            daily_run(
+                archive_db=self.archive,
+                daily_db=self.daily_db,
+                packs=self.packs,
+                artworks=self.artworks,
+                generate=lambda *a, **k: (_ for _ in ()).throw(AssertionError("second")),
+                lock=self.lock,
+            )
+        self.assertEqual(caught.exception.kind, "busy")
+
+    def test_three_media_failures_fail_run_but_poem_stays_eligible(self):
+        from anskar.daily.ledger import begin_run, connect as daily_connect, get_run, update_run
+
+        with daily_connect(self.daily_db) as connection:
+            run_id = begin_run(connection, dry_run=False)
+            update_run(
+                connection,
+                run_id,
+                status="pack_prepared",
+                poem_id=1,
+                pack_id="media-fail-pack",
+                title="THE LAMB",
+                author="William Blake",
+            )
+        (self.packs / "media-fail-pack").mkdir()
+        (self.packs / "media-fail-pack" / "manifest.json").write_text(
+            json.dumps({"artwork_id": "media-fail-pack", "publication_ready": True}),
+            encoding="utf-8",
+        )
+        for attempt in range(3):
+            with self.assertRaises(DailyError):
+                with patch("anskar.daily.pipeline.etsy_is_ready", return_value=False):
+                    daily_run(
+                        archive_db=self.archive,
+                        daily_db=self.daily_db,
+                        packs=self.packs,
+                        artworks=self.artworks,
+                        generate=lambda *a, **k: (_ for _ in ()).throw(AssertionError("no")),
+                        prepare_pack=lambda *a, **k: (_ for _ in ()).throw(AssertionError("no")),
+                        publish_instagram=lambda *a, **k: (_ for _ in ()).throw(
+                            InstagramError("bad media", kind="media")
+                        ),
+                        lock=self.lock,
+                    )
+            with daily_connect(self.daily_db) as connection:
+                row = get_run(connection, run_id)
+                assert row is not None
+                if attempt < 2:
+                    self.assertEqual(row["status"], "pack_prepared")
+                    self.assertEqual(int(row["media_fail_count"]), attempt + 1)
+                else:
+                    self.assertEqual(row["status"], "failed")
+                    self.assertEqual(int(row["media_fail_count"]), 3)
+        with connect(self.archive) as connection:
+            pending = connection.execute(
+                "SELECT status FROM selection_history WHERE poem_id = 1 ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+        # Poem must not be skipped solely for Instagram media failures.
+        self.assertNotEqual(pending["status"] if pending else None, "skipped")
 
     def test_rehearsal_adds_an_artwork_without_using_the_noon_slot(self):
         etsy_calls: list[str] = []

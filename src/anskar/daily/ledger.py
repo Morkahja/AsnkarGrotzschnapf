@@ -26,8 +26,16 @@ STATES = (
     "failed",
 )
 
-# Incomplete runs that block a new daily-run. Completed Instagram days are not active.
+# Incomplete runs that noon should auto-resume (including post-IG bookkeeping).
 ACTIVE = (
+    "selected",
+    "generated",
+    "pack_prepared",
+    "instagram_published",
+)
+
+# Pre-Instagram stages that still block starting a second artwork.
+PRE_INSTAGRAM_ACTIVE = (
     "selected",
     "generated",
     "pack_prepared",
@@ -106,6 +114,8 @@ def _ensure_columns(connection: sqlite3.Connection) -> None:
         "etsy_status": "TEXT",
         "selection_log": "TEXT",
         "run_kind": "TEXT NOT NULL DEFAULT 'daily'",
+        "queue_etsy_only": "INTEGER NOT NULL DEFAULT 0",
+        "media_fail_count": "INTEGER NOT NULL DEFAULT 0",
     }
     for name, decl in additions.items():
         if name not in columns:
@@ -137,29 +147,24 @@ def swedish_calendar_day(moment: datetime | None = None) -> str:
     return clock.astimezone(ZoneInfo(SWEDISH_TZ)).strftime("%Y-%m-%d")
 
 
-def completed_live_run_for_utc_day(connection: sqlite3.Connection, day: str) -> sqlite3.Row | None:
-    """Legacy helper: day is YYYY-MM-DD compared to the UTC date prefix of created_at."""
-    return connection.execute(
-        """
-        SELECT * FROM daily_runs
-        WHERE dry_run = 0
-          AND status = 'completed'
-          AND substr(created_at, 1, 10) = ?
-        ORDER BY created_at DESC LIMIT 1
-        """,
-        (day,),
-    ).fetchone()
-
-
-def completed_live_run_for_swedish_day(
+def instagram_published_live_run_for_swedish_day(
     connection: sqlite3.Connection, day: str
 ) -> sqlite3.Row | None:
-    """day is YYYY-MM-DD in Europe/Stockholm. Dry-runs are ignored."""
+    """
+    A live non-dry-run daily artwork whose Instagram already published on this Swedish day.
+
+    That consumes the noon slot even if Etsy/bookkeeping is still incomplete.
+    """
     rows = connection.execute(
         """
         SELECT * FROM daily_runs
-        WHERE dry_run = 0 AND status = 'completed'
+        WHERE dry_run = 0
           AND COALESCE(run_kind, 'daily') = 'daily'
+          AND (
+            instagram_status = 'published'
+            OR status IN ('instagram_published', 'completed')
+            OR (instagram_media_id IS NOT NULL AND instagram_media_id != '')
+          )
         ORDER BY created_at DESC LIMIT 64
         """
     ).fetchall()
@@ -168,6 +173,13 @@ def completed_live_run_for_swedish_day(
         if swedish_calendar_day(created) == day:
             return row
     return None
+
+
+def completed_live_run_for_swedish_day(
+    connection: sqlite3.Connection, day: str
+) -> sqlite3.Row | None:
+    """Backward-compatible name: day is consumed once Instagram has published."""
+    return instagram_published_live_run_for_swedish_day(connection, day)
 
 
 def get_run(connection: sqlite3.Connection, run_id: str) -> sqlite3.Row | None:
@@ -179,23 +191,27 @@ def begin_run(
     *,
     dry_run: bool,
     run_kind: str = "daily",
+    queue_etsy_only: bool = False,
 ) -> str:
+    """
+    Start a new run, or return the id of an incomplete run to auto-resume.
+
+    Raises busy only when today's Instagram slot is already consumed and there is
+    nothing left to resume for bookkeeping.
+    """
     if run_kind not in {"daily", "test"}:
         raise DailyError("The daily-run kind is not valid.", kind="error")
     existing = active_run(connection)
     if existing is not None:
-        raise DailyError(
-            f"An incomplete daily run already exists: {existing['id']} ({existing['status']}). "
-            f"Resume it with `anskar daily-resume {existing['id']}`.",
-            kind="busy",
-        )
+        # Auto-resume incomplete work instead of refusing noon.
+        return str(existing["id"])
     # A rehearsal does not consume the noon slot.
     if not dry_run and run_kind != "test":
         today = swedish_calendar_day()
-        prior = completed_live_run_for_swedish_day(connection, today)
+        prior = instagram_published_live_run_for_swedish_day(connection, today)
         if prior is not None:
             raise DailyError(
-                f"A live daily artwork was already completed today ({prior['id']}). "
+                f"A live daily artwork already published to Instagram today ({prior['id']}). "
                 "At most one new production artwork is created per Swedish local day.",
                 kind="busy",
             )
@@ -204,11 +220,20 @@ def begin_run(
     connection.execute(
         """
         INSERT INTO daily_runs (
-            id, status, dry_run, run_kind, artwork_status, instagram_status, etsy_status,
+            id, status, dry_run, run_kind, queue_etsy_only, media_fail_count,
+            artwork_status, instagram_status, etsy_status,
             created_at, updated_at
-        ) VALUES (?, 'selected', ?, ?, 'pending', 'pending', ?, ?, ?)
+        ) VALUES (?, 'selected', ?, ?, ?, 0, 'pending', 'pending', ?, ?, ?)
         """,
-        (run_id, 1 if dry_run else 0, run_kind, ETSY_LISTING_PENDING, now, now),
+        (
+            run_id,
+            1 if dry_run else 0,
+            run_kind,
+            1 if queue_etsy_only else 0,
+            ETSY_LISTING_PENDING,
+            now,
+            now,
+        ),
     )
     return run_id
 
@@ -242,6 +267,9 @@ def update_run(connection: sqlite3.Connection, run_id: str, **fields: object) ->
         "error_kind",
         "error_message",
         "completed_at",
+        "queue_etsy_only",
+        "media_fail_count",
+        "run_kind",
     }
     unknown = set(fields) - allowed
     if unknown:
@@ -254,6 +282,8 @@ def update_run(connection: sqlite3.Connection, run_id: str, **fields: object) ->
     for name, value in fields.items():
         if name == "selection_log" and not isinstance(value, (str, type(None))):
             values.append(json.dumps(value, ensure_ascii=False))
+        elif name == "queue_etsy_only" and isinstance(value, bool):
+            values.append(1 if value else 0)
         else:
             values.append(value)
     assignments = ", ".join(f"{name} = ?" for name in fields)
@@ -277,6 +307,9 @@ def public_run(row: sqlite3.Row) -> dict[str, object]:
     artwork_status = row["artwork_status"] if "artwork_status" in keys else None
     instagram_status = row["instagram_status"] if "instagram_status" in keys else None
     etsy_status = row["etsy_status"] if "etsy_status" in keys else None
+    run_kind = row["run_kind"] if "run_kind" in keys and row["run_kind"] else "daily"
+    queue_etsy_only = bool(row["queue_etsy_only"]) if "queue_etsy_only" in keys else False
+    media_fail_count = int(row["media_fail_count"] or 0) if "media_fail_count" in keys else 0
     if not artwork_status:
         if row["image_path"]:
             artwork_status = "generated"
@@ -296,6 +329,9 @@ def public_run(row: sqlite3.Row) -> dict[str, object]:
         "status": row["status"],
         "daily_status": row["status"],
         "dry_run": bool(row["dry_run"]),
+        "run_kind": run_kind,
+        "queue_etsy_only": queue_etsy_only,
+        "media_fail_count": media_fail_count,
         "poem_id": row["poem_id"],
         "selection_id": row["selection_id"],
         "artwork_db_id": row["artwork_db_id"],

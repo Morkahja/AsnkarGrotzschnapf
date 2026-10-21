@@ -7,8 +7,7 @@ from pathlib import Path
 
 from anskar.etsy.errors import EtsyError
 from anskar.etsy.attributes import DEFAULT_MATERIALS
-from anskar.etsy.pricing import VAT_INCLUSIVE_NOTE
-from anskar.printmaker import AI_DISCLOSURE, DIGITAL_NOTICE
+from anskar.printmaker import DIGITAL_NOTICE
 
 MAX_TITLE = 140
 MAX_TAGS = 13
@@ -20,10 +19,20 @@ SINGLE_SALE_NOTICE = (
     "Purchase grants personal download access for the buyer; "
     "it does not transfer copyright ownership or guarantee technical exclusivity."
 )
+AI_CUSTOMER_DISCLOSURE = (
+    "This artwork was created using AI image generation software running locally."
+)
+POEM_INTRO = "The poem this image is based on:"
 
 
 def load_pack(pack_id: str, *, packs: Path) -> tuple[Path, dict]:
-    if not pack_id or "/" in pack_id or "\\" in pack_id or Path(pack_id).name != pack_id:
+    if (
+        not pack_id
+        or pack_id in {".", ".."}
+        or "/" in pack_id
+        or "\\" in pack_id
+        or Path(pack_id).name != pack_id
+    ):
         raise EtsyError("Pack id is not valid.", kind="media")
     folder = packs / pack_id
     manifest_path = folder / "manifest.json"
@@ -69,6 +78,8 @@ def poem_text_cleared_for_reproduction(manifest: dict) -> bool:
 
 
 def listing_fields(manifest: dict, *, price_sek: float | None = None) -> dict[str, object]:
+    """Customer-facing Etsy fields. price_sek is unused (kept for call-site compatibility)."""
+    del price_sek  # Never mention price or VAT in the buyer description.
     rights = manifest.get("rights") if isinstance(manifest.get("rights"), dict) else {}
     title_base = rights.get("title") if isinstance(rights.get("title"), str) else ""
     author = rights.get("author") if isinstance(rights.get("author"), str) else ""
@@ -86,79 +97,26 @@ def listing_fields(manifest: dict, *, price_sek: float | None = None) -> dict[st
         attribution = title_base
     else:
         title = "Single-sale digital art download"
-        attribution = "Artwork without a documented poem title."
+        attribution = "Single-sale digital art."
     title = title[:MAX_TITLE]
-    pixels = manifest.get("print_pixels") if isinstance(manifest.get("print_pixels"), dict) else {}
-    width = pixels.get("width")
-    height = pixels.get("height")
-    intended = (
-        manifest.get("intended_print_size")
-        if isinstance(manifest.get("intended_print_size"), dict)
-        else None
-    )
-    size_line = ""
-    if intended:
-        size_line = (
-            f"Intended print size: {intended.get('width_inches')}×{intended.get('height_inches')} inches "
-            f"at {intended.get('ppi')} PPI.\n"
-        )
-    poem_section = ""
+    size_line = _intended_size_line(manifest)
+    poem_body = ""
     if poem_text_cleared_for_reproduction(manifest):
-        body = ""
         if isinstance(rights.get("body"), str) and rights["body"].strip():
-            body = rights["body"]
+            poem_body = rights["body"].strip()
         elif isinstance(manifest.get("source_text"), str) and manifest["source_text"].strip():
-            body = str(manifest["source_text"])
-        if body.strip():
-            poem_section = "\n".join(
-                [
-                    "",
-                    "Original poem (cleared for commercial reproduction in Sweden):",
-                    body.strip(),
-                    "",
-                ]
-            )
-    interpretation = ""
-    if isinstance(manifest.get("interpretation"), str) and manifest["interpretation"].strip():
-        interpretation = f"Artistic interpretation notes: {manifest['interpretation'].strip()}\n"
-    elif isinstance(manifest.get("visual_prompt"), str) and manifest["visual_prompt"].strip():
-        interpretation = (
-            "The image was interpreted from the poem into a visual composition "
-            "before local generation.\n"
-        )
-    price_line = ""
-    if price_sek is not None:
-        price_line = (
-            f"Listed price: {int(price_sek)} SEK (single digital edition). "
-            f"{VAT_INCLUSIVE_NOTE}\n"
-        )
+            poem_body = str(manifest["source_text"]).strip()
     lines = [
         attribution,
         "",
         DIGITAL_NOTICE,
         SINGLE_SALE_NOTICE,
-        "",
-        f"Image dimensions: {width}×{height} pixels." if width and height else "Digital art print file.",
     ]
-    if size_line.strip():
-        lines.append(size_line.rstrip())
-    lines.append("The download uses the approved print pixels. They were not upscaled.")
-    if price_line.strip():
-        lines.append(price_line.rstrip())
-    if interpretation.strip():
-        lines.append(interpretation.rstrip())
-    if poem_section.strip():
-        lines.extend(["", poem_section.strip()])
-    lines.extend(
-        [
-            "",
-            AI_DISCLOSURE,
-            "This artwork was created using AI image generation software running locally.",
-        ]
-    )
-    extra = str(manifest.get("ai_disclosure") or "").strip()
-    if extra and extra not in "\n".join(lines):
-        lines.extend(["", extra])
+    if size_line:
+        lines.extend(["", size_line])
+    if poem_body:
+        lines.extend(["", POEM_INTRO, "", poem_body])
+    lines.extend(["", AI_CUSTOMER_DISCLOSURE])
     tags = _tags(manifest, rights)
     return {
         "title": title,
@@ -172,6 +130,39 @@ def listing_fields(manifest: dict, *, price_sek: float | None = None) -> dict[st
         "quantity": 1,
         "should_auto_renew": False,
     }
+
+
+def _intended_size_line(manifest: dict) -> str:
+    intended = (
+        manifest.get("intended_print_size")
+        if isinstance(manifest.get("intended_print_size"), dict)
+        else None
+    )
+    if intended and intended.get("width_inches") is not None and intended.get("height_inches") is not None:
+        width = _format_inches(intended.get("width_inches"))
+        height = _format_inches(intended.get("height_inches"))
+        ppi = intended.get("ppi")
+        if ppi is not None:
+            return f"Intended print size: {width}×{height} inches at {int(ppi) if float(ppi) == int(ppi) else ppi} PPI."
+        return f"Intended print size: {width}×{height} inches."
+    pixels = manifest.get("print_pixels") if isinstance(manifest.get("print_pixels"), dict) else {}
+    width = pixels.get("width")
+    height = pixels.get("height")
+    if width and height:
+        # Fallback when older packs lack intended_print_size.
+        return f"Print file: {width}×{height} pixels (square digital download)."
+    return ""
+
+
+def _format_inches(value: object) -> str:
+    try:
+        number = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return str(value)
+    if number == int(number):
+        return str(int(number))
+    text = f"{number:.2f}".rstrip("0").rstrip(".")
+    return text
 
 
 def digital_files(folder: Path) -> list[Path]:

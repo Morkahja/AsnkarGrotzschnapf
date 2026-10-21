@@ -7,8 +7,8 @@ Persistent=false
 WakeSystem=true
 AccuracySec=1min
 Unit=anskar-daily.service
-# Delay after wake. Does not backlog missed days (Persistent=false).
-RandomizedDelaySec=10m
+# Near-zero delay so the inhibited oneshot starts soon after RTC wake.
+RandomizedDelaySec=0
 
 [Install]
 WantedBy=timers.target

@@ -6,6 +6,7 @@ import os
 import pwd
 import shutil
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 
 from anskar.config import PROJECT_ROOT
@@ -203,6 +204,39 @@ def prepare_system_units() -> dict[str, object]:
     }
 
 
+def parse_next_elapse(value: object) -> datetime | None:
+    """Parse systemd NextElapseUSecRealtime (µs epoch, or empty/n/a)."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text or text.lower() in {"n/a", "0", "infinity"}:
+        return None
+    try:
+        usec = int(text)
+    except ValueError:
+        try:
+            return datetime.fromisoformat(text)
+        except ValueError:
+            return None
+    if usec <= 0:
+        return None
+    return datetime.fromtimestamp(usec / 1_000_000, tz=timezone.utc).astimezone()
+
+
+def production_next_elapse() -> datetime | None:
+    """Next noon elapse from the active daily timer (system preferred when installed)."""
+    status = schedule_status()
+    user_next = parse_next_elapse(status.get("next_elapse"))
+    if status.get("system_timer_installed"):
+        system_raw = _systemctl_show(
+            ["show", TIMER_NAME, "-p", "NextElapseUSecRealtime", "--value"]
+        )
+        system_next = parse_next_elapse(system_raw)
+        if system_next is not None:
+            return system_next
+    return user_next
+
+
 def _assert_timer_policy(timer_text: str) -> None:
     if "12:00:00" not in timer_text:
         raise DailyError("The timer template must schedule 12:00:00 noon.", kind="error")
@@ -213,6 +247,11 @@ def _assert_timer_policy(timer_text: str) -> None:
         )
     if "06:30" in timer_text:
         raise DailyError("The timer template still contains the old 06:30 schedule.", kind="error")
+    if "RandomizedDelaySec=0" not in timer_text and "RandomizedDelaySec=0s" not in timer_text:
+        raise DailyError(
+            "The timer template must use RandomizedDelaySec=0 so wake starts promptly.",
+            kind="error",
+        )
 
 
 def _render(template: str) -> str:

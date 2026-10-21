@@ -5,8 +5,8 @@ Description=Run Anskar Grotzschnapf once per day at noon
 OnCalendar=*-*-* 12:00:00
 Persistent=false
 Unit=anskar-daily.service
-# Softens load if several machines share the same clock. Does not create a backlog.
-RandomizedDelaySec=10m
+# Keep near zero so systemd-inhibit starts soon after RTC wake (no long idle gap).
+RandomizedDelaySec=0
 
 [Install]
 WantedBy=timers.target

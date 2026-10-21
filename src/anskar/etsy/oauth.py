@@ -325,8 +325,13 @@ def wait_for_authorization_code(
     cert_file: Path,
     key_file: Path,
     timeout_seconds: float = 600.0,
+    on_listening: Callable[[], object] | None = None,
 ) -> str:
-    """Listen once on the registered HTTPS callback, then shut down."""
+    """Listen once on the registered HTTPS callback, then shut down.
+
+    Start the listener before opening the browser (`on_listening`) so the
+    callback cannot arrive before the socket is ready.
+    """
     parsed = urlparse(normalize_redirect_uri(redirect_uri))
     if parsed.scheme != "https":
         raise EtsyError("The callback URL must be https://.", kind="credentials")
@@ -344,13 +349,14 @@ def wait_for_authorization_code(
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802
+            parsed_path = urllib.parse.urlparse(self.path)
+            if parsed_path.path != path:
+                # Favicon and other noise must not complete the OAuth wait.
+                self.send_response(404)
+                self.end_headers()
+                self.wfile.write(b"Not found")
+                return
             try:
-                parsed_path = urllib.parse.urlparse(self.path)
-                if parsed_path.path != path:
-                    self.send_response(404)
-                    self.end_headers()
-                    self.wfile.write(b"Not found")
-                    return
                 code = parse_callback_query(parsed_path.query, expected_state=expected_state)
                 result["code"] = code
                 self.send_response(200)
@@ -380,6 +386,8 @@ def wait_for_authorization_code(
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
+        if on_listening is not None:
+            on_listening()
         if not done.wait(timeout_seconds):
             raise EtsyError(
                 "Timed out waiting for the Etsy authorization callback.",

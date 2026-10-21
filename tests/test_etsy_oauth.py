@@ -322,7 +322,17 @@ class EtsyOauthTests(unittest.TestCase):
         )
         opened: list[str] = []
 
-        def fake_wait(*, redirect_uri, expected_state, cert_file, key_file, timeout_seconds=600.0):
+        def fake_wait(
+            *,
+            redirect_uri,
+            expected_state,
+            cert_file,
+            key_file,
+            timeout_seconds=600.0,
+            on_listening=None,
+        ):
+            if on_listening is not None:
+                on_listening()
             return "auth-code"
 
         def fake_exchange(*, client_id, code, code_verifier, redirect_uri, **_kwargs):
@@ -640,6 +650,59 @@ class EtsyOauthTests(unittest.TestCase):
             parse_callback_query("error=access_denied&state=s", expected_state="s")
         with self.assertRaises(EtsyError):
             parse_callback_query("state=s", expected_state="s")
+
+    def test_favicon_does_not_complete_oauth_wait(self) -> None:
+        import ssl
+        import threading
+        import time
+        import urllib.error
+        import urllib.request
+
+        from anskar.etsy.oauth import wait_for_authorization_code
+
+        cert, key = ensure_localhost_tls(self.tls_dir)
+        # Use an ephemeral port so parallel tests do not collide with 8743.
+        redirect = "https://127.0.0.1:18743/etsy/callback"
+        result: dict[str, object] = {}
+        errors: list[BaseException] = []
+
+        def run_wait() -> None:
+            try:
+                result["code"] = wait_for_authorization_code(
+                    redirect_uri=redirect,
+                    expected_state="s1",
+                    cert_file=cert,
+                    key_file=key,
+                    timeout_seconds=8.0,
+                )
+            except BaseException as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        thread = threading.Thread(target=run_wait, daemon=True)
+        thread.start()
+        time.sleep(0.4)
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        try:
+            urllib.request.urlopen(
+                "https://127.0.0.1:18743/favicon.ico",
+                context=ctx,
+                timeout=2,
+            )
+        except urllib.error.HTTPError as exc:
+            self.assertEqual(exc.code, 404)
+        # Wait is still open — favicon must not have finished it.
+        self.assertTrue(thread.is_alive())
+        urllib.request.urlopen(
+            "https://127.0.0.1:18743/etsy/callback?code=ok-code&state=s1",
+            context=ctx,
+            timeout=2,
+        )
+        thread.join(timeout=5)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(errors, [])
+        self.assertEqual(result.get("code"), "ok-code")
 
     def _write_app_only(self) -> None:
         setup_etsy_interactive(

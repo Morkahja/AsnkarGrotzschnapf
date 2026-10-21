@@ -39,6 +39,7 @@ from anskar.etsy.oauth import (
 )
 from anskar.etsy.readiness import etsy_publish_readiness
 from anskar.etsy.service import publish_pack as etsy_publish_pack
+from anskar.etsy.service import refresh_listing_descriptions, refresh_listing_images
 from anskar.etsy.state import STATES as ETSY_STATES, set_etsy_state
 from anskar.instagram.credentials import install_token
 from anskar.instagram.errors import InstagramError
@@ -255,6 +256,28 @@ def _parser() -> argparse.ArgumentParser:
         "maintain",
         help="sync sales, apply day-30 discount, remove unsold listings after 42 days",
     )
+    etsy_commands.add_parser(
+        "refresh-descriptions",
+        help="rewrite title and description on every active Etsy listing from the current template",
+    )
+    etsy_refresh_images = etsy_commands.add_parser(
+        "refresh-images",
+        help=(
+            "rebuild web-preview gallery files and replace photos on every active listing "
+            "(download file unchanged)"
+        ),
+    )
+    etsy_refresh_mode = etsy_refresh_images.add_mutually_exclusive_group(required=True)
+    etsy_refresh_mode.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="rebuild local preview gallery only; do not call Etsy",
+    )
+    etsy_refresh_mode.add_argument(
+        "--confirm",
+        action="store_true",
+        help="upload the web-preview gallery to every active Etsy listing",
+    )
     etsy_offerings = etsy_commands.add_parser(
         "offerings",
         help="list Etsy offerings with prices, discounts, sales, and expiry state",
@@ -274,7 +297,10 @@ def _parser() -> argparse.ArgumentParser:
     etsy_mode.add_argument("--dry-run", action="store_true")
     etsy_mode.add_argument("--confirm", action="store_true")
 
-    daily = commands.add_parser("daily-run", help="automatic poem → artwork → Instagram → Etsy")
+    daily = commands.add_parser(
+        "daily-run",
+        help="automatic poem → artwork → Instagram → Etsy (auto-resumes an incomplete live run)",
+    )
     daily.add_argument(
         "--dry-run",
         action="store_true",
@@ -283,7 +309,10 @@ def _parser() -> argparse.ArgumentParser:
     commands.add_parser("daily-status", help="show the active or latest daily run")
     daily_list = commands.add_parser("daily-list", help="list recent daily runs")
     daily_list.add_argument("--limit", type=int, default=20)
-    daily_resume = commands.add_parser("daily-resume", help="resume an incomplete daily run")
+    daily_resume = commands.add_parser(
+        "daily-resume",
+        help="resume a specific incomplete daily run by id (daily-run also auto-resumes)",
+    )
     daily_resume.add_argument("run_id")
 
     schedule = commands.add_parser("schedule", help="noon systemd schedule (user timer + optional system wake)")
@@ -674,6 +703,26 @@ def _etsy(args: argparse.Namespace) -> int:
         for skip in report.get("skipped") or []:
             print(f"Skipped: {skip}")
         return 0
+    if args.etsy_command == "refresh-descriptions":
+        report = refresh_listing_descriptions()
+        print(f"Updated {report['count']} active listing(s).")
+        for item in report.get("updated") or []:
+            print(f"{item['pack_id']} → {item['listing_url']}")
+            print(f"  {item['title']}")
+        for error in report.get("errors") or []:
+            print(f"Error: {error}", file=sys.stderr)
+        return 0 if not report.get("errors") else 1
+    if args.etsy_command == "refresh-images":
+        report = refresh_listing_images(dry_run=bool(args.dry_run))
+        verb = "Would update" if report.get("dry_run") else "Updated"
+        print(f"{verb} {report['count']} active listing(s).")
+        for item in report.get("updated") or []:
+            images = ", ".join(str(name) for name in (item.get("images") or []))
+            print(f"{item['pack_id']} → {item['listing_url']}")
+            print(f"  images: {images}")
+        for error in report.get("errors") or []:
+            print(f"Error: {error}", file=sys.stderr)
+        return 0 if not report.get("errors") else 1
     if args.etsy_command == "offerings":
         report = offerings_status(limit=args.limit)
         print(f"Seller state: {report['seller_state']}")
@@ -791,7 +840,10 @@ def _daily_resume(run_id: str) -> int:
         print(result["error_message"], file=sys.stderr)
         return 1
     if result["status"] == "completed":
-        print("Completed. Poem marked used only after both publications succeeded.")
+        print(
+            "Completed. Poem marked used after Instagram success. "
+            "Etsy may still be queued or retrying."
+        )
     return 0 if result["status"] == "completed" else 1
 
 
@@ -894,7 +946,12 @@ def _test_cycle(args: argparse.Namespace) -> int:
         print("Cancelled. The computer was not suspended and nothing was published.")
         return 1
     try:
-        report = schedule_test_cycle(publish=args.publish)
+        from anskar.daily.schedule import production_next_elapse
+
+        report = schedule_test_cycle(
+            publish=args.publish,
+            production_next=production_next_elapse(),
+        )
     except DailyError as exc:
         print(str(exc), file=sys.stderr)
         return 1

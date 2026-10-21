@@ -1,0 +1,105 @@
+{
+  "artwork_id": "lab-production-seed-1049191551-667a1d45",
+  "approved_at": "2026-10-21T02:59:16.158107+00:00",
+  "publication_ready": true,
+  "rights_cleared": true,
+  "print_specification_met": true,
+  "published": false,
+  "rights": {
+    "matched": true,
+    "publication_ready": true,
+    "reason": "Documented Swedish commercial-use rights cover this poem.",
+    "poem_id": 1,
+    "title": "THE LAMB",
+    "author": "William Blake",
+    "rights_verification_status": "documented",
+    "commercial_use_sweden": "yes"
+  },
+  "source_text": "Little lamb, who made thee?\nDoes thou know who made thee,\nGave thee life, and bid thee feed\nBy the stream and o’er the mead;\nGave thee clothing of delight,\nSoftest clothing, woolly, bright;\nGave thee such a tender voice,\nMaking all the vales rejoice?\n    Little lamb, who made thee?\n    Does thou know who made thee?\n\nLittle lamb, I’ll tell thee;\nLittle lamb, I’ll tell thee:\nHe is callèd by thy name,\nFor He calls Himself a Lamb.\nHe is meek, and He is mild,\nHe became a little child.\nI a child, and thou a lamb,\nWe are callèd by His name.\n    Little lamb, God bless thee!\n    Little lamb, God bless thee!",
+  "source_sha256": "082b1aae0c0bae7ab9ceaca93b28f49fafd8bac66009b1110af9b7a52ad7bdf5",
+  "interpretation": "A vast, undulating canvas of soft, painterly textures, where the sky is a gradient of pale blues and silvers, dissolving into a hazy horizon. At the upper left, a luminous, translucent sphere floats in mid-air, its surface alive with shifting, liquid patterns of light and shadow. The sphere is made of woven, semi-transparent threads that glow with a warm, golden hue, as if spun from the very air. Below it, a vast, impossible room spirals upward, its walls made of flowing, semi-transparent fabric, catching and refracting the light. The room is filled with floating, abstract shapes—clouds, feathers, and fragments of stained glass—each glowing with a soft, inner light. The atmosphere is dreamlike, with a quiet, reverent energy, as if the sphere is both a guardian and a whisper of the divine.",
+  "visual_prompt": "A vast, undulating canvas of soft, painterly textures, where the sky is a gradient of pale blues and silvers, dissolving into a hazy horizon. At the upper left, a luminous, translucent sphere floats in mid-air, its surface alive with shifting, liquid patterns of light and shadow. The sphere is made of woven, semi-transparent threads that glow with a warm, golden hue, as if spun from the very air. Below it, a vast, impossible room spirals upward, its walls made of flowing, semi-transparent fabric, catching and refracting the light. The room is filled with floating, abstract shapes—clouds, feathers, and fragments of stained glass—each glowing with a soft, inner light. The atmosphere is dreamlike, with a quiet, reverent energy, as if the sphere is both a guardian and a whisper of the divine.",
+  "prompt": "A vast, undulating canvas of soft, painterly textures, where the sky is a gradient of pale blues and silvers, dissolving into a hazy horizon. At the upper left, a luminous, translucent sphere floats in mid-air, its surface alive with shifting, liquid patterns of light and shadow. The sphere is made of woven, semi-transparent threads that glow with a warm, golden hue, as if spun from the very air. Below it, a vast, impossible room spirals upward, its walls made of flowing, semi-transparent fabric, catching and refracting the light. The room is filled with floating, abstract shapes—clouds, feathers, and fragments of stained glass—each glowing with a soft, inner light. The atmosphere is dreamlike, with a quiet, reverent energy, as if the sphere is both a guardian and a whisper of the divine.",
+  "prompt_sha256": "667a1d456d476061e8a46eb5a9c00589e79cd5e50f5acfd11adb1645acedcf8b",
+  "abstraction": "surreal",
+  "house_style": true,
+  "style_preset": "painterly",
+  "style_prompt": "Create a poetic fine-art image inspired by the following text. Use a painterly, softly textured, symbolic visual language with refined composition, subtle abstraction, and a gallery-art aesthetic. Favor emotional resonance, atmosphere, and visual poetry over literal depiction. Avoid a plain photorealistic or stock-photo look.",
+  "style_composition": "wrapped",
+  "method": "interpreted",
+  "model_id": "z-image-turbo",
+  "model_name": "Z-Image Turbo",
+  "model_path": "/home/babuni/local-ai/models/z-image-turbo/z_image_turbo-Q4_K.gguf",
+  "command_type": "components",
+  "seed": 1049191551,
+  "steps": 8,
+  "cfg_scale": 1.0,
+  "sampler": "euler",
+  "scheduler": null,
+  "clip_skip": null,
+  "negative_prompt": "",
+  "ollama": {
+    "model": "qwen3:8b",
+    "host": "http://127.0.0.1:11434",
+    "temperature": 0.7,
+    "num_ctx": 4096,
+    "num_predict": 380,
+    "think": false,
+    "truncate": false,
+    "context_length": 40960,
+    "abstraction": "surreal",
+    "revised": true,
+    "prompt_eval_count": 627,
+    "eval_count": 180,
+    "created_at": "2026-10-21T02:44:21.970948499Z",
+    "duration_seconds": 8.593
+  },
+  "original_pixels": {
+    "width": 1024,
+    "height": 1024
+  },
+  "source_print_suitable": false,
+  "export_class": "print",
+  "print_pixels": {
+    "width": 2400,
+    "height": 2400
+  },
+  "target_pixels": {
+    "width": 2400,
+    "height": 2400
+  },
+  "target_inches": 8,
+  "orientation": "square",
+  "upscale_method": "generated",
+  "generation_error": null,
+  "dpi_label": 300,
+  "source_inches_at_label": {
+    "width": 3.41,
+    "height": 3.41
+  },
+  "print_inches_at_label": {
+    "width": 8.0,
+    "height": 8.0
+  },
+  "effective_dpi_at_target": {
+    "width": 128.0,
+    "height": 128.0
+  },
+  "final_effective_dpi_at_target": {
+    "width": 300.0,
+    "height": 300.0
+  },
+  "dpi_note": "The DPI label does not add pixels or detail.",
+  "upscale_note": "The 8-inch print target is 2400 pixels on the long edge at 300 DPI. sd-cli can run an ESRGAN upscale when a model file is present. No ESRGAN weights are installed, and none were downloaded. ImageMagick can interpolate new pixels, and that interpolation was not used. Interpolation does not add image detail. A larger print file is produced only by generating the same prompt at the target size. A DPI label does not add detail.",
+  "ai_disclosure": "This image was generated locally by software. It is not a photograph and not a historical document.",
+  "files": {
+    "original": "original/artwork.png",
+    "experiment": "original/experiment.json",
+    "print": "print/artwork.png",
+    "instagram_preview": "instagram/preview.png",
+    "instagram_caption": "instagram/caption.txt",
+    "etsy_print": "etsy/print.png",
+    "etsy_preview": "etsy/preview.png",
+    "etsy_listing": "etsy/listing.txt"
+  }
+}

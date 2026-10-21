@@ -1,0 +1,15 @@
+[project]
+name = "anskar"
+version = "0.1.0"
+description = "Local poetry archive for Anskar Grotzschnapf."
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "boto3>=1.34",
+]
+
+[project.scripts]
+anskar = "anskar.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

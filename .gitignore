@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.env
+data/sources/
+data/artworks/
+data/experiments/
+data/instagram/
+data/*.sqlite
+data/*.sqlite3
+*.sqlite
+*.sqlite3

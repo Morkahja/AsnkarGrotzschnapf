@@ -1,0 +1,172 @@
+{
+  "artwork_id": "lab-print-1600-seed-1600200-7f8dc631",
+  "approved_at": "2026-10-21T03:21:05.199153+00:00",
+  "publication_ready": false,
+  "rights_cleared": false,
+  "print_specification_met": true,
+  "published": false,
+  "rights": {
+    "matched": false,
+    "publication_ready": false,
+    "reason": "The source text is not an archived poem with documented commercial-use rights."
+  },
+  "source_text": "A quiet meadow at dawn, soft painterly light, a single white lamb, no letters.",
+  "source_sha256": "7f8dc631317059af21474f192d9114afd6096f8f20afbf280d812d94a8c7fa53",
+  "interpretation": "",
+  "visual_prompt": "A quiet meadow at dawn, soft painterly light, a single white lamb, no letters.",
+  "prompt": "A quiet meadow at dawn, soft painterly light, a single white lamb, no letters.",
+  "prompt_sha256": "7f8dc631317059af21474f192d9114afd6096f8f20afbf280d812d94a8c7fa53",
+  "abstraction": "surreal",
+  "house_style": false,
+  "style_preset": "none",
+  "style_prompt": "",
+  "style_composition": "text",
+  "method": "direct",
+  "model_id": "z-image-turbo",
+  "model_name": "Z-Image Turbo",
+  "model_path": "/home/babuni/local-ai/models/z-image-turbo/z_image_turbo-Q4_K.gguf",
+  "model_checksum": null,
+  "command_type": "components",
+  "model_commercial_use": "allowed",
+  "model_commercial_cleared": true,
+  "model_commercial_note": "Commercial use: allowed for this installed model profile.",
+  "seed": 1600200,
+  "steps": 8,
+  "cfg_scale": 1.0,
+  "sampler": "euler",
+  "scheduler": null,
+  "clip_skip": null,
+  "negative_prompt": "",
+  "ollama": null,
+  "original_pixels": {
+    "width": 1600,
+    "height": 1600
+  },
+  "original_pixel_dimensions": {
+    "width": 1600,
+    "height": 1600
+  },
+  "export_pixel_dimensions": {
+    "width": 1600,
+    "height": 1600
+  },
+  "print_pixels": {
+    "width": 1600,
+    "height": 1600
+  },
+  "source_print_suitable": true,
+  "export_class": "print",
+  "orientation": "square",
+  "intended_print_size": {
+    "width_inches": 8.0,
+    "height_inches": 8.0,
+    "ppi": 200,
+    "classification": "standard",
+    "classification_label": "Recommended"
+  },
+  "largest_recommended_print_size": {
+    "width_inches": 8.0,
+    "height_inches": 8.0,
+    "ppi": 200,
+    "classification": "standard",
+    "classification_label": "Recommended"
+  },
+  "largest_acceptable_print_size": {
+    "width_inches": 10.0,
+    "height_inches": 10.0,
+    "ppi": 160,
+    "classification": "artistic",
+    "classification_label": "Acceptable"
+  },
+  "effective_ppi": 200,
+  "quality_classification": "standard",
+  "quality_classification_label": "Recommended",
+  "resizing_method": "none",
+  "upscaling_method": null,
+  "upscale_method": "none",
+  "supported_print_sizes": [
+    {
+      "long_inches": 4,
+      "width_inches": 4.0,
+      "height_inches": 4.0,
+      "square": true,
+      "ppi": 400,
+      "classification": "high",
+      "classification_label": "Excellent",
+      "suitable": true,
+      "recommended": true
+    },
+    {
+      "long_inches": 6,
+      "width_inches": 6.0,
+      "height_inches": 6.0,
+      "square": true,
+      "ppi": 267,
+      "classification": "standard",
+      "classification_label": "Recommended",
+      "suitable": true,
+      "recommended": true
+    },
+    {
+      "long_inches": 8,
+      "width_inches": 8.0,
+      "height_inches": 8.0,
+      "square": true,
+      "ppi": 200,
+      "classification": "standard",
+      "classification_label": "Recommended",
+      "suitable": true,
+      "recommended": true
+    },
+    {
+      "long_inches": 10,
+      "width_inches": 10.0,
+      "height_inches": 10.0,
+      "square": true,
+      "ppi": 160,
+      "classification": "artistic",
+      "classification_label": "Acceptable",
+      "suitable": true,
+      "recommended": false
+    },
+    {
+      "long_inches": 12,
+      "width_inches": 12.0,
+      "height_inches": 12.0,
+      "square": true,
+      "ppi": 133,
+      "classification": "low",
+      "classification_label": "Not print-ready",
+      "suitable": false,
+      "recommended": false
+    }
+  ],
+  "export_format": "png+jpeg",
+  "file_size": 4288911,
+  "jpeg_file_size": 677879,
+  "jpeg_error": null,
+  "instagram_pixels": {
+    "width": 1080,
+    "height": 1080
+  },
+  "instagram_resizing_method": "downscale",
+  "dpi_label": 200,
+  "dpi_note": "The DPI label matches the largest recommended size, or the largest acceptable size when nothing reaches 200 PPI. It does not add pixels or detail.",
+  "resolution_note": "Print quality is the pixel count divided by the physical side. A DPI label does not add pixels. No ESRGAN weights are installed, and none were downloaded. sd-cli can be asked for 1600 or 2048 pixels on a side; both are multiples of 8 and within the 2400-pixel generator limit. Z-Image Turbo has produced 2400×2400 on this machine, so those sizes are inside a resolution it has already reached. RealVisXL V5.0 is an SDXL checkpoint reviewed at 1024×1024. This pack does not interpolate the approved image and does not replace it with a new sample. A larger native file would be a separate generation, not extra detail inside this file.",
+  "target_ppi": 200,
+  "minimum_ppi": 150,
+  "ai_disclosure": "This image was generated locally by software. It is not a photograph and not a historical document.",
+  "digital_download": true,
+  "files": {
+    "original": "original/artwork.png",
+    "experiment": "original/experiment.json",
+    "print": "print/artwork.png",
+    "instagram_preview": "instagram/preview.png",
+    "instagram_caption": "instagram/caption.txt",
+    "etsy_print": "etsy/print.png",
+    "etsy_preview": "etsy/preview.png",
+    "etsy_listing": "etsy/listing.txt",
+    "print_jpeg": "print/artwork.jpg",
+    "etsy_print_jpeg": "etsy/print.jpg"
+  }
+}

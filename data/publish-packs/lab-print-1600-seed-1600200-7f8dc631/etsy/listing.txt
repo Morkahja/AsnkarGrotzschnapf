@@ -1,0 +1,27 @@
+Title: Digital art download
+
+Source text not linked to a documented poem
+
+This is a digital download. The customer does not receive a physical print.
+
+Image dimensions: 1600×1600 pixels, square.
+Export format: png+jpeg. File size: 4288911 bytes.
+The download uses the approved pixels. They were not resized or upscaled.
+Intended print size: 8 × 8 inches at 200 PPI (Recommended).
+Largest recommended print, at least 200 PPI: 8 × 8 inches (200 PPI, Recommended).
+Largest acceptable print, at least 150 PPI: 10 × 10 inches (160 PPI, Acceptable).
+
+Supported sizes:
+- 4 × 4 inches: 400 PPI, Excellent.
+- 6 × 6 inches: 267 PPI, Recommended.
+- 8 × 8 inches: 200 PPI, Recommended.
+- 10 × 10 inches: 160 PPI, Acceptable.
+- 12 × 12 inches: 133 PPI, Unsuitable.
+
+Sizes marked Unsuitable are not offered at this resolution.
+The DPI label does not add image detail.
+Commercial use: allowed for this installed model profile.
+
+Tags: digital download, art print, square, surreal
+
+This image was generated locally by software. It is not a photograph and not a historical document.

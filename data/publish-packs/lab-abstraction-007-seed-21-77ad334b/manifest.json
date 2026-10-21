@@ -1,0 +1,83 @@
+{
+  "artwork_id": "lab-abstraction-007-seed-21-77ad334b",
+  "approved_at": "2026-10-21T02:20:54.024855+00:00",
+  "publication_ready": true,
+  "published": false,
+  "rights": {
+    "matched": true,
+    "publication_ready": true,
+    "reason": "Documented Swedish commercial-use rights cover this poem.",
+    "poem_id": 1,
+    "title": "THE LAMB",
+    "author": "William Blake",
+    "rights_verification_status": "documented",
+    "commercial_use_sweden": "yes"
+  },
+  "source_text": "Little lamb, who made thee?\nDoes thou know who made thee,\nGave thee life, and bid thee feed\nBy the stream and o’er the mead;\nGave thee clothing of delight,\nSoftest clothing, woolly, bright;\nGave thee such a tender voice,\nMaking all the vales rejoice?\n    Little lamb, who made thee?\n    Does thou know who made thee?\n\nLittle lamb, I’ll tell thee;\nLittle lamb, I’ll tell thee:\nHe is callèd by thy name,\nFor He calls Himself a Lamb.\nHe is meek, and He is mild,\nHe became a little child.\nI a child, and thou a lamb,\nWe are callèd by His name.\n    Little lamb, God bless thee!\n    Little lamb, God bless thee!",
+  "source_sha256": "082b1aae0c0bae7ab9ceaca93b28f49fafd8bac66009b1110af9b7a52ad7bdf5",
+  "interpretation": "A luminous, spiraling orb of soft gold and pale lavender hovers in the void, its surface alive with shifting, translucent patterns that resemble both woven wool and flowing water. The orb is encased in a lattice of delicate, curling filaments that pulse gently, as though breathing. Around it, a vast, undulating expanse of deep, velvety indigo stretches, interrupted only by faint, ghostly silhouettes of trees and hills that never quite resolve into form. The light within the orb casts a dreamlike glow, diffusing into the surrounding space like a slow, silent hymn. The texture is smooth yet layered, with a painterly quality that suggests both depth and impermanence. The atmosphere is serene, sacred, and filled with a quiet, unspoken reverence.",
+  "visual_prompt": "A luminous, spiraling orb of soft gold and pale lavender hovers in the void, its surface alive with shifting, translucent patterns that resemble both woven wool and flowing water. The orb is encased in a lattice of delicate, curling filaments that pulse gently, as though breathing. Around it, a vast, undulating expanse of deep, velvety indigo stretches, interrupted only by faint, ghostly silhouettes of trees and hills that never quite resolve into form. The light within the orb casts a dreamlike glow, diffusing into the surrounding space like a slow, silent hymn. The texture is smooth yet layered, with a painterly quality that suggests both depth and impermanence. The atmosphere is serene, sacred, and filled with a quiet, unspoken reverence.",
+  "prompt": "A luminous, spiraling orb of soft gold and pale lavender hovers in the void, its surface alive with shifting, translucent patterns that resemble both woven wool and flowing water. The orb is encased in a lattice of delicate, curling filaments that pulse gently, as though breathing. Around it, a vast, undulating expanse of deep, velvety indigo stretches, interrupted only by faint, ghostly silhouettes of trees and hills that never quite resolve into form. The light within the orb casts a dreamlike glow, diffusing into the surrounding space like a slow, silent hymn. The texture is smooth yet layered, with a painterly quality that suggests both depth and impermanence. The atmosphere is serene, sacred, and filled with a quiet, unspoken reverence.",
+  "prompt_sha256": "77ad334bea063122d51322359189ef2b1b39ee40160bf3d1145ed09f83f17f4c",
+  "abstraction": "surreal",
+  "house_style": true,
+  "style_preset": "painterly",
+  "style_prompt": "Create a poetic fine-art image inspired by the following text. Use a painterly, softly textured, symbolic visual language with refined composition, subtle abstraction, and a gallery-art aesthetic. Favor emotional resonance, atmosphere, and visual poetry over literal depiction. Avoid a plain photorealistic or stock-photo look.",
+  "style_composition": "wrapped",
+  "method": "interpreted",
+  "model_id": "z-image-turbo",
+  "model_name": "Z-Image Turbo",
+  "model_path": "/home/babuni/local-ai/models/z-image-turbo/z_image_turbo-Q4_K.gguf",
+  "command_type": "components",
+  "seed": 21,
+  "steps": 8,
+  "cfg_scale": 1,
+  "sampler": "euler",
+  "scheduler": null,
+  "clip_skip": null,
+  "negative_prompt": "",
+  "ollama": {
+    "model": "qwen3:8b",
+    "host": "http://127.0.0.1:11434",
+    "temperature": 0.7,
+    "num_ctx": 4096,
+    "num_predict": 380,
+    "think": false,
+    "truncate": false,
+    "context_length": 40960,
+    "abstraction": "surreal",
+    "revised": true,
+    "prompt_eval_count": 627,
+    "eval_count": 168,
+    "created_at": "2026-10-21T02:17:17.964174667Z",
+    "duration_seconds": 9.58
+  },
+  "original_pixels": {
+    "width": 512,
+    "height": 512
+  },
+  "print_pixels": {
+    "width": 1024,
+    "height": 1024
+  },
+  "orientation": "square",
+  "print_regenerated": true,
+  "dpi_label": 300,
+  "print_inches_at_label": {
+    "width": 3.41,
+    "height": 3.41
+  },
+  "dpi_note": "The DPI label does not add pixels or detail.",
+  "upscale_note": "No learned upscaler is installed. ImageMagick can interpolate new pixels, and that interpolation was not used. When the print file is larger than the approved image, the extra pixels come from generating the same prompt again. A DPI label does not add detail.",
+  "ai_disclosure": "This image was generated locally by software. It is not a photograph and not a historical document.",
+  "files": {
+    "original": "original/artwork.png",
+    "experiment": "original/experiment.json",
+    "print": "print/artwork.png",
+    "instagram_preview": "instagram/preview.png",
+    "instagram_caption": "instagram/caption.txt",
+    "etsy_print": "etsy/print.png",
+    "etsy_preview": "etsy/preview.png",
+    "etsy_listing": "etsy/listing.txt"
+  }
+}

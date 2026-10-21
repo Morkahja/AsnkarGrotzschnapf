@@ -1,0 +1,173 @@
+{
+  "artwork_id": "lab-comparison-seed-88421021-082b1aae",
+  "approved_at": "2026-10-21T03:09:26.809240+00:00",
+  "publication_ready": true,
+  "rights_cleared": true,
+  "print_specification_met": true,
+  "published": false,
+  "rights": {
+    "matched": true,
+    "publication_ready": true,
+    "reason": "Documented Swedish commercial-use rights cover this poem.",
+    "poem_id": 1,
+    "title": "THE LAMB",
+    "author": "William Blake",
+    "rights_verification_status": "documented",
+    "commercial_use_sweden": "yes"
+  },
+  "source_text": "Little lamb, who made thee?\nDoes thou know who made thee,\nGave thee life, and bid thee feed\nBy the stream and o’er the mead;\nGave thee clothing of delight,\nSoftest clothing, woolly, bright;\nGave thee such a tender voice,\nMaking all the vales rejoice?\n    Little lamb, who made thee?\n    Does thou know who made thee?\n\nLittle lamb, I’ll tell thee;\nLittle lamb, I’ll tell thee:\nHe is callèd by thy name,\nFor He calls Himself a Lamb.\nHe is meek, and He is mild,\nHe became a little child.\nI a child, and thou a lamb,\nWe are callèd by His name.\n    Little lamb, God bless thee!\n    Little lamb, God bless thee!",
+  "source_sha256": null,
+  "interpretation": "",
+  "visual_prompt": "Little lamb, who made thee?\nDoes thou know who made thee,\nGave thee life, and bid thee feed\nBy the stream and o’er the mead;\nGave thee clothing of delight,\nSoftest clothing, woolly, bright;\nGave thee such a tender voice,\nMaking all the vales rejoice?\n    Little lamb, who made thee?\n    Does thou know who made thee?\n\nLittle lamb, I’ll tell thee;\nLittle lamb, I’ll tell thee:\nHe is callèd by thy name,\nFor He calls Himself a Lamb.\nHe is meek, and He is mild,\nHe became a little child.\nI a child, and thou a lamb,\nWe are callèd by His name.\n    Little lamb, God bless thee!\n    Little lamb, God bless thee!",
+  "prompt": "Little lamb, who made thee?\nDoes thou know who made thee,\nGave thee life, and bid thee feed\nBy the stream and o’er the mead;\nGave thee clothing of delight,\nSoftest clothing, woolly, bright;\nGave thee such a tender voice,\nMaking all the vales rejoice?\n    Little lamb, who made thee?\n    Does thou know who made thee?\n\nLittle lamb, I’ll tell thee;\nLittle lamb, I’ll tell thee:\nHe is callèd by thy name,\nFor He calls Himself a Lamb.\nHe is meek, and He is mild,\nHe became a little child.\nI a child, and thou a lamb,\nWe are callèd by His name.\n    Little lamb, God bless thee!\n    Little lamb, God bless thee!",
+  "prompt_sha256": "082b1aae0c0bae7ab9ceaca93b28f49fafd8bac66009b1110af9b7a52ad7bdf5",
+  "abstraction": null,
+  "house_style": false,
+  "style_preset": "none",
+  "style_prompt": "",
+  "style_composition": "text",
+  "method": null,
+  "model_id": null,
+  "model_name": null,
+  "model_path": null,
+  "command_type": null,
+  "seed": 88421021,
+  "steps": 30,
+  "cfg_scale": 6.0,
+  "sampler": null,
+  "scheduler": "karras",
+  "clip_skip": 2,
+  "negative_prompt": "text, letters, words, captions, handwriting, typography, logos, signage, watermarks, writing, alphabet, numbers, signature, font, title, subtitle, inscription, label, glyphs, calligraphy, printed text, written text",
+  "ollama": null,
+  "original_pixels": {
+    "width": 1024,
+    "height": 1024
+  },
+  "original_pixel_dimensions": {
+    "width": 1024,
+    "height": 1024
+  },
+  "export_pixel_dimensions": {
+    "width": 1024,
+    "height": 1024
+  },
+  "print_pixels": {
+    "width": 1024,
+    "height": 1024
+  },
+  "source_print_suitable": true,
+  "export_class": "print",
+  "orientation": "square",
+  "intended_print_size": {
+    "width_inches": 4.0,
+    "height_inches": 4.0,
+    "ppi": 256,
+    "classification": "standard",
+    "classification_label": "Recommended"
+  },
+  "largest_recommended_print_size": {
+    "width_inches": 4.0,
+    "height_inches": 4.0,
+    "ppi": 256,
+    "classification": "standard",
+    "classification_label": "Recommended"
+  },
+  "largest_acceptable_print_size": {
+    "width_inches": 6.0,
+    "height_inches": 6.0,
+    "ppi": 171,
+    "classification": "artistic",
+    "classification_label": "Acceptable"
+  },
+  "effective_ppi": 256,
+  "quality_classification": "standard",
+  "quality_classification_label": "Recommended",
+  "resizing_method": "none",
+  "upscaling_method": null,
+  "upscale_method": "none",
+  "supported_print_sizes": [
+    {
+      "long_inches": 4,
+      "width_inches": 4.0,
+      "height_inches": 4.0,
+      "square": true,
+      "ppi": 256,
+      "classification": "standard",
+      "classification_label": "Recommended",
+      "suitable": true,
+      "recommended": true
+    },
+    {
+      "long_inches": 6,
+      "width_inches": 6.0,
+      "height_inches": 6.0,
+      "square": true,
+      "ppi": 171,
+      "classification": "artistic",
+      "classification_label": "Acceptable",
+      "suitable": true,
+      "recommended": false
+    },
+    {
+      "long_inches": 8,
+      "width_inches": 8.0,
+      "height_inches": 8.0,
+      "square": true,
+      "ppi": 128,
+      "classification": "low",
+      "classification_label": "Not print-ready",
+      "suitable": false,
+      "recommended": false
+    },
+    {
+      "long_inches": 10,
+      "width_inches": 10.0,
+      "height_inches": 10.0,
+      "square": true,
+      "ppi": 102,
+      "classification": "low",
+      "classification_label": "Not print-ready",
+      "suitable": false,
+      "recommended": false
+    },
+    {
+      "long_inches": 12,
+      "width_inches": 12.0,
+      "height_inches": 12.0,
+      "square": true,
+      "ppi": 85,
+      "classification": "low",
+      "classification_label": "Not print-ready",
+      "suitable": false,
+      "recommended": false
+    }
+  ],
+  "export_format": "png+jpeg",
+  "file_size": 2169094,
+  "jpeg_file_size": 395606,
+  "jpeg_error": null,
+  "instagram_pixels": {
+    "width": 1024,
+    "height": 1024
+  },
+  "instagram_resizing_method": "none",
+  "dpi_label": 256,
+  "dpi_note": "The DPI label matches the largest recommended size, or the largest acceptable size when nothing reaches 200 PPI. It does not add pixels or detail.",
+  "resolution_note": "Print quality is the pixel count divided by the physical side. A DPI label does not add pixels. No ESRGAN weights are installed, and none were downloaded. sd-cli can be asked for 1600 or 2048 pixels on a side; both are multiples of 8 and within the 2400-pixel generator limit. Z-Image Turbo has produced 2400×2400 on this machine, so those sizes are inside a resolution it has already reached. RealVisXL V5.0 is an SDXL checkpoint reviewed at 1024×1024. This pack does not interpolate the approved image and does not replace it with a new sample. A larger native file would be a separate generation, not extra detail inside this file.",
+  "target_ppi": 200,
+  "minimum_ppi": 150,
+  "ai_disclosure": "This image was generated locally by software. It is not a photograph and not a historical document.",
+  "digital_download": true,
+  "files": {
+    "original": "original/artwork.png",
+    "experiment": "original/experiment.json",
+    "print": "print/artwork.png",
+    "instagram_preview": "instagram/preview.png",
+    "instagram_caption": "instagram/caption.txt",
+    "etsy_print": "etsy/print.png",
+    "etsy_preview": "etsy/preview.png",
+    "etsy_listing": "etsy/listing.txt",
+    "print_jpeg": "print/artwork.jpg",
+    "etsy_print_jpeg": "etsy/print.jpg"
+  }
+}

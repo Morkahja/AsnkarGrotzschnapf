@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Anskar prompt lab</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #1c1915;
+      --muted: #5c564c;
+      --line: #d9d1c4;
+      --paper: #f6f1e8;
+      --panel: #fffdf8;
+      --accent: #6d3b2c;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font: 16px/1.45 "Iowan Old Style", Palatino, Georgia, serif;
+      color: var(--ink);
+      background: var(--paper);
+    }
+    main { max-width: 1180px; margin: 0 auto; padding: 28px 20px 64px; }
+    h1 { font-size: 2rem; font-weight: 600; margin: 0 0 6px; }
+    .lede { margin: 0 0 24px; color: var(--muted); max-width: 68ch; }
+    .layout { display: grid; grid-template-columns: minmax(280px, 420px) 1fr; gap: 24px; }
+    form, .result, .gallery { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+    form { padding: 16px; display: grid; gap: 12px; align-content: start; }
+    label { display: grid; gap: 4px; font-size: 0.92rem; }
+    input, textarea, select, button { font: inherit; color: inherit; }
+    input, textarea, select {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+    }
+    textarea { min-height: 280px; resize: vertical; white-space: pre-wrap; }
+    textarea.negative { min-height: 6.5rem; }
+    textarea.visual { min-height: 8rem; }
+    textarea.style { min-height: 6rem; }
+    .hint { margin: 0; color: var(--muted); font-size: 0.92rem; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+    button {
+      border: 1px solid var(--accent);
+      background: var(--accent);
+      color: #fffdf8;
+      border-radius: 6px;
+      padding: 10px 16px;
+      cursor: pointer;
+    }
+    button.secondary { background: transparent; color: var(--accent); }
+    button:disabled { opacity: 0.55; cursor: wait; }
+    details.advanced {
+      border-top: 1px solid var(--line);
+      padding-top: 10px;
+      margin-top: 4px;
+    }
+    details.advanced > summary {
+      cursor: pointer;
+      color: var(--muted);
+      font-size: 0.92rem;
+      list-style: none;
+    }
+    details.advanced > summary::-webkit-details-marker { display: none; }
+    details.advanced > summary::before { content: "▸ "; }
+    details.advanced[open] > summary::before { content: "▾ "; }
+    .advanced-body { display: grid; gap: 12px; margin-top: 12px; }
+    .result { padding: 16px; min-height: 320px; }
+    .result img { width: 100%; height: auto; display: block; background: #efeae1; }
+    pre {
+      white-space: pre-wrap;
+      font: 0.92rem/1.4 ui-monospace, monospace;
+      background: #f3eee6;
+      padding: 10px;
+      border-radius: 6px;
+      margin: 12px 0 0;
+    }
+    .status { min-height: 1.4em; color: var(--muted); }
+    .status.error { color: #8d1d1d; }
+    .gallery { margin-top: 24px; padding: 16px; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
+    .card { border: 1px solid var(--line); border-radius: 6px; padding: 8px; background: #fff; cursor: pointer; text-align: left; }
+    .card img { width: 100%; aspect-ratio: 1; object-fit: cover; background: #efeae1; }
+    .card p { margin: 6px 0 0; font-size: 0.82rem; color: var(--muted); }
+    @media (max-width: 800px) { .layout { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Prompt lab</h1>
+    <p class="lede">Paste a poem. Generate asks Ollama for a Surreal Abstract visual prompt, then makes the image with the Dreamlike house style. The poetry archive is left alone.</p>
+    <div class="layout">
+      <form id="lab">
+        <label>Text
+          <textarea id="body" name="body" placeholder="Paste the poem here."></textarea>
+        </label>
+        <div class="actions">
+          <button type="submit" id="generate">Generate</button>
+        </div>
+        <p class="status" id="status" role="status"></p>
+
+        <details class="advanced" id="advanced">
+          <summary>Advanced</summary>
+          <div class="advanced-body">
+            <label>Model
+              <select id="model">
+                <option value="z-image-turbo" selected>Z-Image Turbo</option>
+                <option value="z-image">Z-Image</option>
+                <option value="realvisxl-v5">RealVisXL V5</option>
+                <option value="dreamshaper-xl">DreamShaper XL</option>
+              </select>
+            </label>
+            <p id="model-note" class="hint"></p>
+            <label>Experiment name
+              <input id="experiment" name="experiment" value="lab" autocomplete="off">
+            </label>
+            <label>Visual prompt
+              <textarea id="visual" class="visual" placeholder="Filled by Ollama when you generate. You can edit it here and generate again."></textarea>
+            </label>
+            <p class="hint" id="visual-count"></p>
+            <label>Negative prompt
+              <textarea id="negative" class="negative"></textarea>
+            </label>
+            <label>Abstraction
+              <select id="abstraction">
+                <option value="gentle">Gentle</option>
+                <option value="surreal" selected>Surreal Abstract</option>
+                <option value="experimental">Experimental</option>
+              </select>
+            </label>
+            <label>Preset
+              <select id="preset">
+                <option value="dreamlike" selected>Dreamlike</option>
+                <option value="painterly">Painterly</option>
+                <option value="symbolic">Symbolic</option>
+                <option value="custom">Custom</option>
+              </select>
+            </label>
+            <label>Style prompt
+              <textarea id="style" class="style"></textarea>
+            </label>
+            <div class="row">
+              <label>Seed <input id="seed" name="seed" inputmode="numeric" placeholder="random"></label>
+              <label>Steps <input id="steps" name="steps" type="number" min="1" max="50" value="8"></label>
+            </div>
+            <div class="row">
+              <label>Width <input id="width" name="width" type="number" min="128" max="2400" value="512"></label>
+              <label>Height <input id="height" name="height" type="number" min="128" max="2400" value="512"></label>
+            </div>
+            <div class="row">
+              <label>CFG scale <input id="cfg" name="cfg_scale" type="number" min="0" max="20" step="0.1" value="1"></label>
+              <label>Clip skip <input id="clip-skip" name="clip_skip" type="number" min="1" max="4" placeholder="not used" disabled></label>
+            </div>
+            <div class="row">
+              <label>Sampler
+                <select id="sampler">
+                  <option value="euler" selected>euler</option>
+                  <option value="euler_a">euler_a</option>
+                  <option value="heun">heun</option>
+                  <option value="dpm2">dpm2</option>
+                  <option value="dpm++2s_a">dpm++2s_a</option>
+                  <option value="dpm++2m">dpm++2m</option>
+                  <option value="dpm++2m_sde">dpm++2m_sde</option>
+                  <option value="lms">lms</option>
+                </select>
+              </label>
+              <label>Scheduler
+                <select id="scheduler">
+                  <option value="" selected>default</option>
+                  <option value="discrete">discrete</option>
+                  <option value="karras">karras</option>
+                  <option value="exponential">exponential</option>
+                  <option value="sgm_uniform">sgm_uniform</option>
+                  <option value="simple">simple</option>
+                  <option value="beta">beta</option>
+                </select>
+              </label>
+            </div>
+            <div class="actions">
+              <button type="button" class="secondary" id="reseed">New seed</button>
+              <button type="button" class="secondary" id="stanza">First stanza</button>
+              <button type="button" class="secondary" id="restore" hidden>Restore full text</button>
+            </div>
+            <p class="hint">Image prompt that will be sent</p>
+            <pre id="preview">Paste text and press Generate.</pre>
+            <p class="hint">Negative prompt that will be sent</p>
+            <pre id="negative-preview">None</pre>
+          </div>
+        </details>
+      </form>
+      <section class="result" aria-live="polite">
+        <h2>Latest image</h2>
+        <p id="meta">No image yet.</p>
+        <button type="button" class="secondary" id="approve" disabled>Approve for print</button>
+        <img id="image" alt="" hidden>
+        <pre id="sent" hidden></pre>
+      </section>
+    </div>
+    <section class="gallery">
+      <h2>Saved comparisons</h2>
+      <p class="lede">Choose a saved run to load its text and settings.</p>
+      <div class="cards" id="cards"></div>
+    </section>
+  </main>
+  <script>
+    const form = document.querySelector("#lab");
+    const status = document.querySelector("#status");
+    const preview = document.querySelector("#preview");
+    const negativePreview = document.querySelector("#negative-preview");
+    const image = document.querySelector("#image");
+    const meta = document.querySelector("#meta");
+    const sent = document.querySelector("#sent");
+    const cards = document.querySelector("#cards");
+    const restore = document.querySelector("#restore");
+    let savedBody = "";
+    let presets = {};
+    let models = [];
+    let interpretation = "";
+    let interpretedSource = "";
+    let ollamaRecord = null;
+    let metadataFile = "";
+
+    function setBusy(busy) {
+      for (const button of form.querySelectorAll("button")) button.disabled = busy;
+      document.querySelector("#approve").disabled = busy || metadataFile === "";
+    }
+
+    function setStatus(message, isError) {
+      status.textContent = message;
+      status.classList.toggle("error", Boolean(isError));
+    }
+
+    function houseStylePrompt() {
+      return document.querySelector("#style").value || presets.dreamlike || "";
+    }
+
+    function payload(seedOverride) {
+      const seedText = document.querySelector("#seed").value.trim();
+      return {
+        experiment: document.querySelector("#experiment").value || "lab",
+        title: "",
+        body: document.querySelector("#body").value,
+        mode: "body",
+        house_style: true,
+        style_preset: document.querySelector("#preset").value || "dreamlike",
+        style_prompt: houseStylePrompt(),
+        style_composition: "wrapped",
+        abstraction: document.querySelector("#abstraction").value || "surreal",
+        method: "interpreted",
+        visual_prompt: document.querySelector("#visual").value,
+        interpretation: interpretation,
+        source_text: interpretedSource,
+        ollama: ollamaRecord,
+        model_id: document.querySelector("#model").value,
+        sampler: document.querySelector("#sampler").value,
+        scheduler: document.querySelector("#scheduler").value,
+        clip_skip: clipSkipValue(),
+        negative_enabled: true,
+        negative_prompt: document.querySelector("#negative").value,
+        seed: seedOverride === null ? null : (seedText === "" ? null : Number(seedText)),
+        width: Number(document.querySelector("#width").value),
+        height: Number(document.querySelector("#height").value),
+        steps: Number(document.querySelector("#steps").value),
+        cfg_scale: Number(document.querySelector("#cfg").value)
+      };
+    }
+
+    function clipSkipValue() {
+      const field = document.querySelector("#clip-skip");
+      if (field.disabled || field.value.trim() === "") return null;
+      return Number(field.value);
+    }
+
+    function applyModel(model) {
+      if (!model) return;
+      document.querySelector("#model").value = model.id;
+      document.querySelector("#width").value = model.width;
+      document.querySelector("#height").value = model.height;
+      document.querySelector("#steps").value = model.steps;
+      document.querySelector("#cfg").value = model.cfg_scale;
+      const sampler = document.querySelector("#sampler");
+      if ([...sampler.options].some((option) => option.value === model.sampler)) sampler.value = model.sampler;
+      document.querySelector("#scheduler").value = model.scheduler || "";
+      const clip = document.querySelector("#clip-skip");
+      if (model.clip_skip == null) {
+        clip.value = "";
+        clip.disabled = true;
+      } else {
+        clip.disabled = false;
+        clip.value = String(model.clip_skip);
+      }
+      document.querySelector("#negative").value = model.negative_prompt || "";
+      const note = document.querySelector("#model-note");
+      if (model.commercial_use === "unverified") {
+        note.textContent = "Commercial use: Unverified. Experimental and local preview only.";
+      } else {
+        note.textContent = "";
+      }
+      refreshPreview();
+    }
+
+    function updateVisualCount() {
+      const text = document.querySelector("#visual").value.trim();
+      const count = text === "" ? 0 : text.split(/\s+/).length;
+      document.querySelector("#visual-count").textContent = count ? count + " words in the visual prompt" : "";
+    }
+
+    function refreshPreview() {
+      updateVisualCount();
+      const negative = document.querySelector("#negative").value.trim();
+      negativePreview.textContent = negative || "None";
+      const visual = document.querySelector("#visual").value.trim();
+      preview.textContent = visual || "Paste text and press Generate. Ollama writes the image prompt first.";
+    }
+
+    function showResult(data) {
+      image.hidden = false;
+      image.alt = data.title || "Generated image";
+      image.src = data.image_url + "?t=" + Date.now();
+      const modelNote = data.model_name ? data.model_name + " · " : "";
+      meta.textContent = modelNote + "seed " + data.seed + " · " + data.width + "×" + data.height
+        + " · " + data.duration_seconds.toFixed(1) + "s · " + data.prompt_sha256.slice(0, 12);
+      sent.hidden = false;
+      sent.textContent = data.negative_prompt
+        ? data.prompt + "\n\nNegative prompt:\n" + data.negative_prompt
+        : data.prompt;
+      document.querySelector("#seed").value = String(data.seed);
+      if (typeof data.visual_prompt === "string" && data.visual_prompt) {
+        document.querySelector("#visual").value = data.visual_prompt;
+      }
+      metadataFile = data.metadata_file || "";
+      document.querySelector("#approve").disabled = metadataFile === "";
+      refreshPreview();
+    }
+
+    async function loadGallery() {
+      const response = await fetch("/api/experiments");
+      const data = await response.json();
+      cards.replaceChildren();
+      for (const item of data.experiments) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "card";
+        const img = document.createElement("img");
+        img.src = item.image_url;
+        img.alt = "";
+        const caption = document.createElement("p");
+        const modelNote = item.model_name ? " · " + item.model_name : "";
+        caption.textContent = (item.experiment || "lab") + modelNote + " · seed " + item.seed;
+        button.append(img, caption);
+        button.addEventListener("click", () => loadRun(item));
+        cards.append(button);
+      }
+    }
+
+    function loadRun(item) {
+      document.querySelector("#experiment").value = item.experiment || "lab";
+      document.querySelector("#body").value = item.body || item.source_text || "";
+      document.querySelector("#seed").value = String(item.seed);
+      document.querySelector("#steps").value = String(item.steps);
+      document.querySelector("#width").value = String(item.width);
+      document.querySelector("#height").value = String(item.height);
+      document.querySelector("#cfg").value = String(item.cfg_scale);
+      loadModel(item);
+      loadInterpretation(item);
+      const abstraction = document.querySelector("#abstraction");
+      const level = item.abstraction || "surreal";
+      if ([...abstraction.options].some((option) => option.value === level)) abstraction.value = level;
+      const preset = item.style_preset || "dreamlike";
+      const select = document.querySelector("#preset");
+      select.value = [...select.options].some((option) => option.value === preset) ? preset : "dreamlike";
+      if (typeof item.style_prompt === "string" && item.style_prompt) {
+        document.querySelector("#style").value = item.style_prompt;
+      } else if (presets[select.value]) {
+        document.querySelector("#style").value = presets[select.value];
+      }
+      metadataFile = item.metadata_file || "";
+      document.querySelector("#approve").disabled = metadataFile === "";
+      savedBody = "";
+      restore.hidden = true;
+      showResult(item);
+    }
+
+    async function interpretText() {
+      const body = payload(undefined);
+      if (!body.body.trim()) {
+        setStatus("Paste some text first.", true);
+        return null;
+      }
+      setStatus("Asking Ollama…");
+      const response = await fetch("/api/interpret", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setStatus(data.error, true);
+        return null;
+      }
+      interpretation = data.interpretation || data.prompt || "";
+      interpretedSource = data.source_text || body.body;
+      ollamaRecord = data.ollama || null;
+      document.querySelector("#visual").value = interpretation;
+      refreshPreview();
+      return interpretation;
+    }
+
+    async function generateImage(newSeed) {
+      const body = newSeed ? { ...payload(null), seed: null } : payload(undefined);
+      if (newSeed) document.querySelector("#seed").value = "";
+      if (!body.visual_prompt.trim()) {
+        setStatus("The visual prompt is empty.", true);
+        return false;
+      }
+      setStatus("Generating locally…");
+      const response = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setStatus(data.error, true);
+        return false;
+      }
+      showResult(data);
+      setStatus("Saved " + data.output_path);
+      await loadGallery();
+      return true;
+    }
+
+    async function generate(newSeed) {
+      setBusy(true);
+      try {
+        const visual = await interpretText();
+        if (visual == null) return;
+        await generateImage(newSeed);
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    function loadInterpretation(item) {
+      document.querySelector("#visual").value = typeof item.visual_prompt === "string" ? item.visual_prompt : "";
+      interpretation = typeof item.interpretation === "string" ? item.interpretation : "";
+      interpretedSource = typeof item.source_text === "string" ? item.source_text : "";
+      ollamaRecord = item.ollama && typeof item.ollama === "object" ? item.ollama : null;
+    }
+
+    async function approvePrint() {
+      if (!metadataFile) {
+        setStatus("Load a saved image before approving it.", true);
+        return;
+      }
+      setStatus("Preparing the print file locally…");
+      setBusy(true);
+      try {
+        const response = await fetch("/api/print/approve", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ metadata_file: metadataFile })
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          setStatus(data.error, true);
+          return;
+        }
+        const ready = data.publication_ready ? "Publication-ready." : "Not publication-ready.";
+        setStatus("Print pack saved at " + data.pack_path + " " + ready);
+      } finally {
+        setBusy(false);
+        document.querySelector("#approve").disabled = metadataFile === "";
+      }
+    }
+
+    function loadModel(item) {
+      const select = document.querySelector("#model");
+      const modelId = item.model_id || "z-image-turbo";
+      if ([...select.options].some((option) => option.value === modelId)) select.value = modelId;
+      const sampler = document.querySelector("#sampler");
+      const samplerName = item.sampler || item.sampling_method || "euler";
+      if ([...sampler.options].some((option) => option.value === samplerName)) sampler.value = samplerName;
+      const scheduler = document.querySelector("#scheduler");
+      const schedulerName = item.scheduler || "";
+      scheduler.value = [...scheduler.options].some((option) => option.value === schedulerName) ? schedulerName : "";
+      const clip = document.querySelector("#clip-skip");
+      if (item.clip_skip == null) {
+        clip.value = "";
+        clip.disabled = true;
+      } else {
+        clip.disabled = false;
+        clip.value = String(item.clip_skip);
+      }
+      if (typeof item.negative_prompt === "string") {
+        document.querySelector("#negative").value = item.negative_prompt;
+      }
+      const profile = models.find((model) => model.id === modelId);
+      const note = document.querySelector("#model-note");
+      if (profile && profile.commercial_use === "unverified") {
+        note.textContent = "Commercial use: Unverified. Experimental and local preview only.";
+      } else {
+        note.textContent = "";
+      }
+    }
+
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      generate(false);
+    });
+    document.querySelector("#approve").addEventListener("click", () => approvePrint());
+    document.querySelector("#reseed").addEventListener("click", () => generate(true));
+    document.querySelector("#stanza").addEventListener("click", async () => {
+      const current = document.querySelector("#body").value;
+      const response = await fetch("/api/first-stanza", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ body: current })
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setStatus(data.error, true);
+        return;
+      }
+      savedBody = current;
+      document.querySelector("#body").value = data.stanza;
+      restore.hidden = false;
+    });
+    restore.addEventListener("click", () => {
+      document.querySelector("#body").value = savedBody;
+      restore.hidden = true;
+    });
+    document.querySelector("#model").addEventListener("change", () => {
+      applyModel(models.find((model) => model.id === document.querySelector("#model").value));
+    });
+    document.querySelector("#preset").addEventListener("change", () => {
+      const name = document.querySelector("#preset").value;
+      if (presets[name]) document.querySelector("#style").value = presets[name];
+    });
+    document.querySelector("#style").addEventListener("input", () => {
+      const text = document.querySelector("#style").value;
+      const match = Object.keys(presets).find((name) => presets[name] === text);
+      document.querySelector("#preset").value = match || "custom";
+    });
+    document.querySelector("#visual").addEventListener("input", refreshPreview);
+    document.querySelector("#negative").addEventListener("input", refreshPreview);
+    fetch("/api/defaults").then((response) => response.json()).then((data) => {
+      presets = data.presets || {};
+      models = data.models || [];
+      if (models.length) {
+        const select = document.querySelector("#model");
+        select.replaceChildren();
+        for (const model of models) {
+          const option = document.createElement("option");
+          option.value = model.id;
+          option.textContent = model.name;
+          select.append(option);
+        }
+      }
+      document.querySelector("#preset").value = "dreamlike";
+      document.querySelector("#abstraction").value = "surreal";
+      document.querySelector("#style").value = presets.dreamlike || "";
+      document.querySelector("#experiment").value = "lab";
+      applyModel(models.find((model) => model.id === "z-image-turbo") || models[0]);
+      refreshPreview();
+    });
+    loadGallery();
+  </script>
+</body>
+</html>
